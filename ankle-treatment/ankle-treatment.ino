@@ -16,13 +16,14 @@
 #define HOME_BUTTON_PIN 8
 
 // Define limit switch pin for homing
-#define HOME_LIMIT_PIN 9
+#define HOME_LIMIT_L_PIN 9
+#define HOME_LIMIT_R_PIN 10
 #define HOME_STEP 300
 
 // Define rotary encoder pins for acceleration
-#define ROTARY_CLK_PIN 10
-#define ROTARY_DT_PIN 11
-#define ROTARY_BUTTON_PIN 12
+#define ROTARY_CLK_PIN 11
+#define ROTARY_DT_PIN 12
+#define ROTARY_BUTTON_PIN 13
 #define ROTARY_STEPS 10
 
 // Common parameters for stepper motors (L-R)
@@ -32,36 +33,46 @@
 #define ACCEL 100
 
 // Define max upper and lower position
-#define POS_STOP 700
+#define POS_STOP 350
+
+// Define max pulses for homing
+#define HOMING_MAX 6400
 
 // Create a new instance of the AccelStepper class for each stepper
 AccelStepper stepperL = AccelStepper(AccelStepper::DRIVER, L_STEP_PIN, L_DIR_PIN);
 AccelStepper stepperR = AccelStepper(AccelStepper::DRIVER, R_STEP_PIN, R_DIR_PIN);
 
-// Create button instances
+// Create control button instances
 ezButton buttonStart(START_BUTTON_PIN);
 ezButton buttonStop(STOP_BUTTON_PIN);
 ezButton buttonHome(HOME_BUTTON_PIN);
-ezButton buttonLimit(HOME_LIMIT_PIN);
 
 // Create rotary encoder instance and rotary button
 RotaryEncoder encoder(ROTARY_CLK_PIN, ROTARY_DT_PIN, RotaryEncoder::LatchMode::TWO03);
 ezButton encoderButton(ROTARY_BUTTON_PIN);
 
-// one second info printout timer
-elapsedMillis printTime;
-
-// stop signal from button
-bool isStopped = true;
-
 // Accel initial values from rotary
 int lastPos = -1;
 
-// Homing control
+// one second info printout timer
+elapsedMillis printTime;
+
+// stop signal from button one for each stepper
+bool isStoppedL = true;
+bool isStoppedR = true;
+int currentDirL = 1; // 1 or -1 positive or negative for direction
+int currentDirR = 1;
+
+// Homing control one for each stepper
 enum HomingStatus {Init, Searching, Touched, Reached}; // Used to check limit switch position
-HomingStatus homingStatus = Init;
-long initialHomingPos = 0;
-bool isHoming = false;
+ezButton buttonLimitL(HOME_LIMIT_L_PIN);
+ezButton buttonLimitR(HOME_LIMIT_R_PIN);
+HomingStatus homingStatusL = Init;
+HomingStatus homingStatusR = Init;
+long initialHomingPosL = 0;
+long initialHomingPosR = 0;
+bool isHomingL = false;
+bool isHomingR = false;
 
 void setup() {
   // Initialize for loggin purposes
@@ -71,25 +82,35 @@ void setup() {
   buttonStart.setDebounceTime(DEBOUNCE_INTERVAL);
   buttonStop.setDebounceTime(DEBOUNCE_INTERVAL);
   buttonHome.setDebounceTime(DEBOUNCE_INTERVAL);
-  buttonLimit.setDebounceTime(DEBOUNCE_INTERVAL);
+
+  // Initialize limit switches
+  buttonLimitL.setDebounceTime(DEBOUNCE_INTERVAL);
+  buttonLimitR.setDebounceTime(DEBOUNCE_INTERVAL);
 
   // Initialize acceleration encoder
   encoderButton.setDebounceTime(DEBOUNCE_INTERVAL);
   encoder.setPosition(SPEED * ROTARY_STEPS);
+
+  // Initialize stepper positions
+  stepperL.setCurrentPosition(0);
+  stepperR.setCurrentPosition(0);
 }
 
 void loop() {
+  bool homingButtonPressed = false;
+
   // Call loop to poll each button state
   buttonStart.loop();
   buttonStop.loop();
   buttonHome.loop();
-  buttonLimit.loop();
+  buttonLimitL.loop();
+  buttonLimitR.loop();
   encoderButton.loop();
 
   // Loggin debug information from both steppers
   logInfo();
 
-  // Poll changes for acceleration
+  // Poll acceleration changes 
   encoder.tick();
   
   // Set acceleration using encoder position
@@ -102,38 +123,189 @@ void loop() {
 
   // Stop button pressed then stop inmediately both motors
   if(buttonStop.isPressed()) {
-    stepperStop();
+    stepperStopL();
+    stepperStopR();
   } 
   
   // Home button pressed or homing is executing
-  if (buttonHome.isPressed() || isHoming) {
-    stepperHoming();
+  homingButtonPressed = buttonHome.isPressed();
+  if (homingButtonPressed || isHomingL) {
+    stepperHomingL();
+  }
+  if (homingButtonPressed || isHomingR) {
+    stepperHomingR();
   }
 
   // Move to next position until end is reached
-  if (!isStopped) {
+  if (!isStoppedL) {
     stepperL.run();
+    currentDirL = (stepperL.currentPosition() > 0 ? 1 : -1);
+  }
+  if (!isStoppedR) {
     stepperR.run();
+    currentDirR = (stepperR.currentPosition() > 0 ? 1 : -1);
   }
 
   // Change direction when end is reached
-  if (!isHoming) {
+  if (!isHomingL && !isHomingR) {
     changeRotationDir();
   }
 }
 
-void initMovement() {
-  // Initialize left stepper motor
+void initMovementL() {
+  // Initialize stepper motor
   stepperL.setMaxSpeed(SPEED_MAX);
   stepperL.setAcceleration(ACCEL);
-  stepperL.moveTo(POS_STOP);
   stepperL.setSpeed(SPEED);
+}
 
-  // Initialize right stepper motor
+void initMovementR() {
+  // Initialize stepper motor
   stepperR.setMaxSpeed(SPEED_MAX);
   stepperR.setAcceleration(ACCEL);
-  stepperR.moveTo(POS_STOP);
   stepperR.setSpeed(SPEED);
+}
+
+void changeRotationDir() {
+  // final position reached then invert direction 
+  if (abs(stepperL.currentPosition()) >= POS_STOP) {
+    stepperL.moveTo(-stepperL.currentPosition());
+  }
+  if (abs(stepperR.currentPosition()) >= POS_STOP) {
+    stepperR.moveTo(-stepperR.currentPosition());
+  }
+}
+
+void stepperStart() {
+  Serial.println("Start button pressed, start all");
+  isStoppedL = false;
+  initMovementL();
+  stepperL.moveTo(currentDirL * POS_STOP);
+  isStoppedR = false;
+  initMovementR();
+  stepperR.moveTo(currentDirR * POS_STOP);
+}
+
+void stepperStopL() {
+    Serial.println("Stop button pressed, stop left stepper");
+    stepperL.stop();
+    isStoppedL = true;
+}
+
+void stepperStopR() {
+    Serial.println("Stop button pressed, stop rigth stepper");
+    stepperR.stop();
+    isStoppedR = true;
+}
+
+void stepperHoming() {
+  // homing both steppers
+  stepperHomingL();
+  stepperHomingR();
+}
+
+void stepperHomingL() {
+  int state = LOW;
+
+  switch (homingStatusL) {
+    case Init:
+      // Set Max Speed and Acceleration of each Steppers at startup for homing
+      stepperL.setCurrentPosition(0);
+      stepperL.setMaxSpeed(SPEED_MAX);
+      stepperL.moveTo(-HOMING_MAX); // always rotate clockwise
+      isStoppedL = false;
+      isHomingL = true;
+      homingStatusL = Searching;
+      break;
+      
+    case Searching:
+      state = buttonLimitL.getState();
+      if (state == HIGH) {
+        // limit switch touched
+        homingStatusL = Touched;
+      }
+      break;
+
+    case Touched:
+      stepperStopL();
+      stepperL.setMaxSpeed(SPEED_MAX);
+      isStoppedL = false;
+      homingStatusL = Reached;
+      break;
+
+    case Reached:
+      state = buttonLimitL.getState();
+      if (state == LOW) {
+        // homing ended then stop
+        homingStatusL = Init;
+        isHomingL = false;
+        currentDirL = 0;
+        stepperStopL();
+        stepperL.setCurrentPosition(0);
+        initMovementL();
+      }
+      else {
+        initialHomingPosL+=HOME_STEP;
+        stepperL.moveTo(initialHomingPosL);
+      }
+      break;
+
+    default:
+      // error
+      Serial.println("Left homing status invalid");
+  }  
+}
+
+void stepperHomingR() {
+  int state = LOW;
+
+  switch (homingStatusR) {
+    case Init:
+      // Set Max Speed and Acceleration of each Steppers at startup for homing
+      stepperR.setCurrentPosition(0);
+      stepperR.setMaxSpeed(SPEED_MAX);
+      stepperR.moveTo(HOMING_MAX); // always rotate counter clockwise
+      isStoppedR = false;
+      isHomingR = true;
+      homingStatusR = Searching;
+      break;
+      
+    case Searching:
+      state = buttonLimitR.getState();
+      if (state == HIGH) {
+        // limit switch touched
+        homingStatusR = Touched;
+      }
+      break;
+
+    case Touched:
+      stepperStopR();
+      stepperR.setMaxSpeed(SPEED_MAX);
+      isStoppedR = false;
+      homingStatusR = Reached;
+      break;
+
+    case Reached:
+      state = buttonLimitR.getState();
+      if (state == LOW) {
+        // homing ended then stop
+        homingStatusR = Init;
+        isHomingR = false;
+        currentDirR = 0;
+        stepperStopR();
+        stepperR.setCurrentPosition(0);
+        initMovementR();
+      }
+      else {
+        initialHomingPosR+=HOME_STEP;
+        stepperR.moveTo(-initialHomingPosR);
+      }
+      break;
+
+    default:
+      // error
+      Serial.println("Rigth homing status invalid");
+  }  
 }
 
 void setAcceleration() {
@@ -165,85 +337,6 @@ void setAcceleration() {
       stepperR.setMaxSpeed((float)newPos);
     }
   }
-}
-
-void changeRotationDir() {
-  // final position reached then invert direction 
-  if (abs(stepperL.currentPosition()) >= POS_STOP) {
-    stepperL.moveTo(-stepperL.currentPosition());
-  }
-  if (abs(stepperR.currentPosition()) >= POS_STOP) {
-    stepperR.moveTo(-stepperR.currentPosition());
-  }
-}
-
-void stepperStart() {
-  Serial.println("Start button pressed, start all");
-  isStopped = false;
-  initMovement();
-}
-
-void stepperStop() {
-    Serial.println("Stop button pressed, stop all");
-    stepperL.stop();
-    stepperR.stop();
-    isStopped = true;
-}
-
-void stepperHoming() {
-  int state = LOW;
-
-  switch (homingStatus) {
-    case Init:
-      // Set Max Speed and Acceleration of each Steppers at startup for homing
-      stepperL.setCurrentPosition(0);
-      stepperL.setMaxSpeed(SPEED_MAX);
-      //stepperL.setAcceleration(ACCEL);
-      isStopped = false;
-      isHoming = true;
-      homingStatus = Searching;
-      initialHomingPos = stepperL.currentPosition();
-      break;
-      
-    case Searching:
-      state = buttonLimit.getState();
-      if (state == HIGH) {
-        // limit switch touched
-        homingStatus = Touched;
-      }
-      else {
-        initialHomingPos+=HOME_STEP;
-        stepperL.moveTo(initialHomingPos);
-      }
-      break;
-
-    case Touched:
-      stepperStop();
-      stepperL.setMaxSpeed(SPEED_MAX);
-      //stepperL.setAcceleration(ACCEL);
-      isStopped = false;
-      homingStatus = Reached;
-      break;
-
-    case Reached:
-      state = buttonLimit.getState();
-      if (state == LOW) {
-        // homing ended then stop
-        homingStatus = Init;
-        isHoming = false;
-        stepperStop();
-        initMovement();
-      }
-      else {
-        initialHomingPos+=HOME_STEP;
-        stepperL.moveTo(-initialHomingPos);
-      }
-      break;
-
-    default:
-      // error
-      Serial.println("Homing status invalid");
-  }  
 }
 
 void logInfo() {
