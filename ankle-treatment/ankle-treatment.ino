@@ -18,7 +18,7 @@
 // Define limit switch pin for homing
 #define HOME_LIMIT_L_PIN 9
 #define HOME_LIMIT_R_PIN 10
-#define HOME_STEP 300
+#define HOME_STEP 50
 
 // Define rotary encoder pins for acceleration
 #define ROTARY_CLK_PIN 11
@@ -35,8 +35,9 @@
 // Define max upper and lower position
 #define POS_STOP 350
 
-// Define max pulses for homing
-#define HOMING_MAX 6400
+// Homing config
+#define HOMING_MAX 6400 // Define max pulses for homing
+#define HOMING_OFFSET 200 // Define steps after reach limit switch
 
 // Create a new instance of the AccelStepper class for each stepper
 AccelStepper stepperL = AccelStepper(AccelStepper::DRIVER, L_STEP_PIN, L_DIR_PIN);
@@ -56,6 +57,8 @@ int lastPos = -1;
 
 // one second info printout timer
 elapsedMillis printTime;
+long lastPosL = 0;
+long lastPosR = 0;
 
 // stop signal from button one for each stepper
 bool isStoppedL = true;
@@ -64,13 +67,11 @@ int currentDirL = 1; // 1 or -1 positive or negative for direction
 int currentDirR = 1;
 
 // Homing control one for each stepper
-enum HomingStatus {Init, Searching, Touched, Reached}; // Used to check limit switch position
+enum HomingStatus {Init, Searching, Touched, Reached, Home}; // Used to check limit switch position
 ezButton buttonLimitL(HOME_LIMIT_L_PIN);
 ezButton buttonLimitR(HOME_LIMIT_R_PIN);
 HomingStatus homingStatusL = Init;
 HomingStatus homingStatusR = Init;
-long initialHomingPosL = 0;
-long initialHomingPosR = 0;
 bool isHomingL = false;
 bool isHomingR = false;
 
@@ -118,11 +119,13 @@ void loop() {
 
   // Start button pressed then continue moving to next postition
   if (buttonStart.isPressed()) {
-    stepperStart();
+    Serial.println("Start button pressed, start all");
+    steppersStart();
   }
 
   // Stop button pressed then stop inmediately both motors
   if(buttonStop.isPressed()) {
+    Serial.println("Stop button pressed, stopping both steppers");
     stepperStopL();
     stepperStopR();
   } 
@@ -130,7 +133,7 @@ void loop() {
   // Home button pressed or homing is executing
   homingButtonPressed = buttonHome.isPressed();
   if (homingButtonPressed || isHomingL) {
-    stepperHomingL();
+    //stepperHomingL();
   }
   if (homingButtonPressed || isHomingR) {
     stepperHomingR();
@@ -167,7 +170,7 @@ void initMovementR() {
 }
 
 void changeRotationDir() {
-  // final position reached then invert direction 
+  // final position reached then change direction 
   if (abs(stepperL.currentPosition()) >= POS_STOP) {
     stepperL.moveTo(-stepperL.currentPosition());
   }
@@ -176,8 +179,8 @@ void changeRotationDir() {
   }
 }
 
-void stepperStart() {
-  Serial.println("Start button pressed, start all");
+void steppersStart() {
+  // Init and start movement
   isStoppedL = false;
   initMovementL();
   stepperL.moveTo(currentDirL * POS_STOP);
@@ -187,21 +190,15 @@ void stepperStart() {
 }
 
 void stepperStopL() {
-    Serial.println("Stop button pressed, stop left stepper");
+    Serial.println("Stopping left stepper");
     stepperL.stop();
     isStoppedL = true;
 }
 
 void stepperStopR() {
-    Serial.println("Stop button pressed, stop rigth stepper");
+    Serial.println("Stopping rigth stepper");
     stepperR.stop();
     isStoppedR = true;
-}
-
-void stepperHoming() {
-  // homing both steppers
-  stepperHomingL();
-  stepperHomingR();
 }
 
 void stepperHomingL() {
@@ -209,6 +206,7 @@ void stepperHomingL() {
 
   switch (homingStatusL) {
     case Init:
+      Serial.println("Homing left stepper");
       // Set Max Speed and Acceleration of each Steppers at startup for homing
       stepperL.setCurrentPosition(0);
       stepperL.setMaxSpeed(SPEED_MAX);
@@ -228,7 +226,9 @@ void stepperHomingL() {
 
     case Touched:
       stepperStopL();
+      stepperL.setCurrentPosition(0);
       stepperL.setMaxSpeed(SPEED_MAX);
+      stepperL.moveTo(HOMING_MAX);
       isStoppedL = false;
       homingStatusL = Reached;
       break;
@@ -236,20 +236,24 @@ void stepperHomingL() {
     case Reached:
       state = buttonLimitL.getState();
       if (state == LOW) {
-        // homing ended then stop
-        homingStatusL = Init;
-        isHomingL = false;
-        currentDirL = 0;
-        stepperStopL();
-        stepperL.setCurrentPosition(0);
-        initMovementL();
-      }
-      else {
-        initialHomingPosL+=HOME_STEP;
-        stepperL.moveTo(initialHomingPosL);
+        homingStatusL = Home;
+        stepperL.moveTo(HOMING_OFFSET);
       }
       break;
 
+    case Home:
+      // clockwise movement
+      // distance will decrease from HOMMING_OFFSET to 0
+      if (stepperL.distanceToGo() < 0) {
+        // homing ended then stop
+        homingStatusL = Init;
+        isHomingL = false;
+        currentDirL = 1;
+        stepperStopL();
+        initMovementL();
+      }
+      break;
+      
     default:
       // error
       Serial.println("Left homing status invalid");
@@ -261,10 +265,11 @@ void stepperHomingR() {
 
   switch (homingStatusR) {
     case Init:
+      Serial.println("Homing right stepper");
       // Set Max Speed and Acceleration of each Steppers at startup for homing
       stepperR.setCurrentPosition(0);
       stepperR.setMaxSpeed(SPEED_MAX);
-      stepperR.moveTo(HOMING_MAX); // always rotate counter clockwise
+      stepperR.moveTo(HOMING_MAX); // always rotate clockwise
       isStoppedR = false;
       isHomingR = true;
       homingStatusR = Searching;
@@ -280,7 +285,9 @@ void stepperHomingR() {
 
     case Touched:
       stepperStopR();
+      stepperR.setCurrentPosition(0);
       stepperR.setMaxSpeed(SPEED_MAX);
+      stepperR.moveTo(-HOMING_MAX);
       isStoppedR = false;
       homingStatusR = Reached;
       break;
@@ -288,23 +295,28 @@ void stepperHomingR() {
     case Reached:
       state = buttonLimitR.getState();
       if (state == LOW) {
-        // homing ended then stop
-        homingStatusR = Init;
-        isHomingR = false;
-        currentDirR = 0;
-        stepperStopR();
-        stepperR.setCurrentPosition(0);
-        initMovementR();
-      }
-      else {
-        initialHomingPosR+=HOME_STEP;
-        stepperR.moveTo(-initialHomingPosR);
+        homingStatusR = Home;
+        //stepperR.setCurrentPosition(0);
+        stepperR.moveTo(-HOMING_OFFSET);
       }
       break;
 
+    case Home:
+      // counter-clockwise movement
+      // distance will increase from -HOMMING_OFFSET to 0
+      if (stepperL.distanceToGo() > 0) {
+        // homing ended then stop
+        homingStatusR = Init;
+        isHomingR = false;
+        currentDirR = 1;
+        stepperStopR();
+        initMovementR();
+      }
+      break;
+      
     default:
       // error
-      Serial.println("Rigth homing status invalid");
+      Serial.println("Right homing status invalid");
   }  
 }
 
@@ -326,8 +338,8 @@ void setAcceleration() {
 
     // save new speed
     if (lastPos != newPos) {
-      Serial.print("Setting new accel value: ");
-      Serial.println(newPos);
+      // Serial.print("Setting new accel value: ");
+      // Serial.println(newPos);
       lastPos = newPos;
     }
 
@@ -342,17 +354,30 @@ void setAcceleration() {
 void logInfo() {
   if (printTime >= 1000) {
     printTime = 0;
-    Serial.print("Left stepper (speed/max/position) -> ");
-    Serial.print(stepperL.speed());
-    Serial.print("/");
-    Serial.print(stepperL.maxSpeed());
-    Serial.print("/");
-    Serial.println(stepperL.currentPosition());
-    Serial.print("Right stepper (speed/position) -> ");
-    Serial.print(stepperR.speed());
-    Serial.print("/");
-    Serial.println(stepperR.currentPosition());
-    Serial.print("Current acceleration: ");
-    Serial.println(stepperL.speed());
+
+    // print only if stepper is moving
+    if (stepperL.currentPosition() != lastPosL) {
+      lastPosL = stepperL.currentPosition();
+      Serial.print("Left stepper (speed/max/position/target) -> ");
+      Serial.print(stepperL.speed());
+      Serial.print("/");
+      Serial.print(stepperL.maxSpeed());
+      Serial.print("/");
+      Serial.print(stepperL.currentPosition());
+      Serial.print("/");
+      Serial.println(stepperL.targetPosition());
+    }
+
+    if (stepperR.currentPosition() != lastPosR) {
+      lastPosR = stepperR.currentPosition();
+      Serial.print("Right stepper (speed/max/position/target) -> ");
+      Serial.print(stepperR.speed());
+      Serial.print("/");
+      Serial.print(stepperR.maxSpeed());
+      Serial.print("/");
+      Serial.print(stepperR.currentPosition());
+      Serial.print("/");
+      Serial.println(stepperR.targetPosition());
+    }
   }
 }
