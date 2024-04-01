@@ -27,13 +27,13 @@
 #define ROTARY_STEPS 10
 
 // Common parameters for stepper motors (L-R)
-#define SPEED_MIN 100
+#define SPEED_MIN 10
 #define SPEED_MAX 500
 #define SPEED 100
 #define ACCEL 100
 
 // Define max upper and lower position
-#define POS_STOP 250
+#define POS_STOP 200
 
 // Homing config
 #define HOMING_MAX 6400 // Define max pulses for homing
@@ -54,6 +54,7 @@ ezButton encoderButton(ROTARY_BUTTON_PIN);
 
 // Accel initial values from rotary
 int lastPos = -1;
+int maxSpeed = SPEED_MAX;
 
 // one second info printout timer
 elapsedMillis printTime;
@@ -65,6 +66,8 @@ bool isStoppedL = true;
 bool isStoppedR = true;
 int currentDirL = 1; // 1 or -1 positive or negative for direction
 int currentDirR = 1;
+
+// target pos found
 bool isMovingToTargetL = false;
 bool isMovingToTargetR = false;
 
@@ -74,8 +77,8 @@ ezButton buttonLimitL(HOME_LIMIT_L_PIN);
 ezButton buttonLimitR(HOME_LIMIT_R_PIN);
 HomingStatus homingStatusL = Init;
 HomingStatus homingStatusR = Init;
-bool isHomingL = false;
-bool isHomingR = false;
+bool isHomingL = true;
+bool isHomingR = true;
 
 void setup() {
   // Initialize for loggin purposes
@@ -122,13 +125,13 @@ void loop() {
   setAcceleration();
 
   // Start button pressed then continue moving to next postition
-  if (buttonStart.isPressed()) {
+  if (buttonStart.isPressed() && (!isHomingL || !isHomingR)) {
     Serial.println("Start button pressed, start all");
     steppersStart();
   }
 
   // Stop button pressed then stop inmediately both motors
-  if(buttonStop.isPressed()) {
+  if(buttonStop.isPressed() && (!isHomingL || !isHomingR)) {
     Serial.println("Stop button pressed, stopping both steppers");
     stepperStopL();
     stepperStopR();
@@ -164,14 +167,14 @@ void loop() {
 
 void initMovementL() {
   // Initialize stepper motor
-  stepperL.setMaxSpeed(SPEED_MAX);
+  stepperL.setMaxSpeed(maxSpeed);
   stepperL.setAcceleration(ACCEL);
   stepperL.setSpeed(SPEED);
 }
 
 void initMovementR() {
   // Initialize stepper motor
-  stepperR.setMaxSpeed(SPEED_MAX);
+  stepperR.setMaxSpeed(maxSpeed);
   stepperR.setAcceleration(ACCEL);
   stepperR.setSpeed(SPEED);
 }
@@ -327,15 +330,18 @@ void setAcceleration() {
 
     // save new speed
     if (lastPos != newPos) {
-      // Serial.print("Setting new accel value: ");
-      // Serial.println(newPos);
       lastPos = newPos;
     }
 
     // set new speed to both steppers 
     if (newPos > 0) {
-      stepperL.setMaxSpeed((float)newPos);
-      stepperR.setMaxSpeed((float)newPos);
+      Serial.print("Setting new acceleration (current/new): ");
+      Serial.print(stepperL.acceleration());
+      Serial.print("/");
+      Serial.println(newPos);
+      maxSpeed = newPos;
+      stepperL.setMaxSpeed((float)maxSpeed);
+      stepperR.setMaxSpeed((float)maxSpeed);
     }
   }
 }
