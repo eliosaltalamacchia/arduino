@@ -148,19 +148,31 @@ void loop() {
 
   // Move to next position until end is reached
   if (!isStoppedL) {
-    isMovingToTargetL = stepperL.run();
-    currentDirL = (stepperL.currentPosition() > 0 ? 1 : -1);
-    if (!isMovingToTargetL) {
-      Serial.println("Changing left stepper direction");
-      stepperL.moveTo(-stepperL.currentPosition());
+    if (!isHomingL && buttonLimitL.getState() == HIGH) {
+      Serial.println("Left limit swich touched while running, stopping stepper");
+      steppersStop();
+    }
+    else {
+      isMovingToTargetL = stepperL.run();
+      currentDirL = (stepperL.currentPosition() > 0 ? 1 : -1);
+      if (!isMovingToTargetL) {
+        Serial.println("Changing left stepper direction");
+        stepperL.moveTo(-stepperL.currentPosition());
+      }
     }
   }
   if (!isStoppedR) {
-    isMovingToTargetR = stepperR.run();
-    currentDirR = (stepperR.currentPosition() > 0 ? 1 : -1);
-    if (!isMovingToTargetR) {
-      Serial.println("Changing right stepper direction");
-      stepperR.moveTo(-stepperR.currentPosition());
+    if (!isHomingR && buttonLimitR.getState() == HIGH) {
+      Serial.println("Right limit swich touched while running, stopping stepper");
+      steppersStop();
+    }
+    else {
+      isMovingToTargetR = stepperR.run();
+      currentDirR = (stepperR.currentPosition() > 0 ? 1 : -1);
+      if (!isMovingToTargetR) {
+        Serial.println("Changing right stepper direction");
+        stepperR.moveTo(-stepperR.currentPosition());
+      }
     }
   }
 }
@@ -188,6 +200,11 @@ void steppersStart() {
   isStoppedR = false;
   initMovementR();
   stepperR.moveTo(currentDirR * POS_STOP);
+}
+
+void steppersStop() {
+  stepperStopL();
+  stepperStopR();
 }
 
 void stepperStopL() {
