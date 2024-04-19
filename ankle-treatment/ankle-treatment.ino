@@ -34,9 +34,8 @@
 #define POS_STOP 200
 
 // Homing config
-#define HOMING_MAX 6400 // Define max pulses for homing
-#define HOMING_OFFSET_L 20 // Define steps after reach limit switch
-#define HOMING_OFFSET_R 250 // Define steps after reach limit switch
+#define HOMING_MAX 6400 // Define max steps for homing
+#define HOMING_OFFSET POS_STOP // Define steps after reach limit switch
 
 // Create a new instance of the AccelStepper class for each stepper
 AccelStepper stepperL = AccelStepper(AccelStepper::DRIVER, L_STEP_PIN, L_DIR_PIN);
@@ -72,6 +71,11 @@ HomingStatus homingStatusL = Init;
 HomingStatus homingStatusR = Init;
 bool isHomingL = true;
 bool isHomingR = true;
+
+// Normal movement status
+enum MoveStatus {Clockwise, CounterClockwise, Adjusting}; // Used to check limit switch position
+MoveStatus moveStatusL = Clockwise;
+MoveStatus moveStatusR = CounterClockwise;
 
 void setup() {
   // Initialize for loggin purposes
@@ -118,7 +122,7 @@ void loop() {
   encoder.tick();
   
   // Set speed using encoder position
-  setSpeed();
+  //setSpeed();
 
   // Start button pressed then continue moving to next postition
   if (buttonStart.isPressed() && (!isHomingL || !isHomingR)) {
@@ -127,7 +131,7 @@ void loop() {
   }
 
   // Stop button pressed then stop inmediately both motors
-  if(buttonStop.isPressed() && (!isHomingL || !isHomingR)) {
+  if(buttonStop.isPressed()) {
     Serial.println("Stop button pressed, stopping both steppers");
     steppersStop();
   } 
@@ -141,56 +145,28 @@ void loop() {
     stepperHomingR();
   }
 
-  // Move to next position until end is reached
-  if (!isStoppedL) {
-    stepperL.runSpeedToPosition();
-    if (!isHomingL) {
-      // always check limit switch
-      if (buttonLimitL.getState() == HIGH) {
-        Serial.println("Left limit swich touched while running, stopping stepper");
-        steppersStop();
-      }
-      else {
-        // check direction change
-        if (stepperL.distanceToGo() == 0) {
-          Serial.println("Changing left stepper direction");
-          //stepperL.moveTo(-stepperL.currentPosition());
-          stepperL.moveTo(stepperL.currentPosition() == 0 ? POS_STOP : 0);
-          stepperL.setSpeed(speed);
-        }
-      }
-    }
+  // Move left stepper to next position until stop or home
+  if (!isStoppedL && !isHomingL) {
+    stepperMoveL();
   }
   
-  if (!isStoppedR) {
-    stepperR.runSpeedToPosition();
-    if (!isHomingR) {
-      // always check limit switch
-      if (buttonLimitR.getState() == HIGH) {
-        Serial.println("Right limit swich touched while running, stopping stepper");
-        steppersStop();
-      }
-      else {
-        // check direction change
-        if (stepperR.distanceToGo() == 0) {
-          Serial.println("Changing right stepper direction");
-          //stepperR.moveTo(-stepperR.currentPosition());
-          stepperR.moveTo(stepperR.currentPosition() == 0 ? POS_STOP : 0);
-          stepperR.setSpeed(speed);
-        }
-      }
-    }
+  // Move right stepper to next position until stop or home
+  if (!isStoppedR && !isHomingR) {
+    stepperMoveR();
   }
 }
 
 void steppersStart() {
-  // Init and start movement
+  // left stepper goes to POS_STOP
   isStoppedL = false;
-  stepperL.moveTo(POS_STOP);
+  moveStatusL = Clockwise;
+  stepperL.move(POS_STOP);
   stepperL.setSpeed(speed);
 
+  // right stepper goes to limit switch
   isStoppedR = false;
-  stepperR.moveTo(POS_STOP);
+  moveStatusR = CounterClockwise;
+  stepperR.move(HOMING_MAX);
   stepperR.setSpeed(speed);
 }
 
@@ -204,12 +180,80 @@ void steppersStop() {
   isStoppedR = true;
 }
 
-void stepperChangeDir(AccelStepper& stepper) {
-  if (stepper.distanceToGo() == 0) {
-    Serial.println("Changing stepper direction");
-    stepper.move(-stepper.currentPosition());
-    stepper.setSpeed(speed);
-  }
+void stepperMoveL() {
+  // start moving
+  switch (moveStatusL) {
+    case Clockwise:
+      if (stepperL.distanceToGo() == 0) {
+        Serial.println("Changing left stepper direction");
+        stepperL.move(-HOMING_MAX); // search for limit switch
+        stepperL.setSpeed(speed);
+        moveStatusL = CounterClockwise;
+      }
+      break;
+
+    case CounterClockwise:
+      // check limit switch
+      if (buttonLimitL.getState() == HIGH) {
+        stepperL.move(HOMING_OFFSET);
+        stepperL.setSpeed(speed);
+        moveStatusL = Adjusting;
+      }
+      break;
+
+    case Adjusting:
+      if (buttonLimitL.getState() == LOW) {
+        stepperL.move(POS_STOP);
+        stepperL.setSpeed(speed);
+        moveStatusL = Clockwise;
+      }
+      break;
+
+    default:
+      // error
+      Serial.println("Left move status invalid");
+  }    
+
+  // move to target
+  stepperL.runSpeedToPosition();
+}
+
+void stepperMoveR() {
+  // start moving
+  switch (moveStatusR) {
+    case Clockwise:
+      if (stepperR.distanceToGo() == 0) {
+        Serial.println("Changing right stepper direction");
+        stepperR.move(HOMING_MAX);
+        stepperR.setSpeed(speed);
+        moveStatusR = CounterClockwise;
+      }
+      break;
+
+    case CounterClockwise:
+      // check limit switch
+      if (buttonLimitR.getState() == HIGH) {
+        stepperR.move(-HOMING_OFFSET);
+        stepperR.setSpeed(speed);
+        moveStatusR = Adjusting;
+      }
+      break;
+
+    case Adjusting:
+      if (buttonLimitR.getState() == LOW) {
+        stepperR.move(-POS_STOP);
+        stepperR.setSpeed(speed);
+        moveStatusR = Clockwise;
+      }
+      break;
+
+    default:
+      // error
+      Serial.println("Right move status invalid");
+  }    
+
+  // move to target
+  stepperR.runSpeedToPosition();
 }
 
 void stepperHomingL() {
@@ -238,7 +282,7 @@ void stepperHomingL() {
     case Touched:
       if (buttonLimitL.getState() == LOW) {
         Serial.println("Moving offset");
-        stepperL.move(HOMING_OFFSET_L);
+        stepperL.move(HOMING_OFFSET);
         stepperL.setSpeed(speed);
         homingStatusL = Home;
       }
@@ -258,7 +302,10 @@ void stepperHomingL() {
     default:
       // error
       Serial.println("Left homing status invalid");
-  }  
+  }
+
+  // move to target
+  stepperL.runSpeedToPosition();
 }
 
 void stepperHomingR() {
@@ -287,7 +334,7 @@ void stepperHomingR() {
     case Touched:
       if (buttonLimitR.getState() == LOW) {
         Serial.println("Moving offset");
-        stepperR.move(-HOMING_OFFSET_R);
+        stepperR.move(-HOMING_OFFSET);
         stepperR.setSpeed(speed);
         homingStatusR = Home;
       }
@@ -309,6 +356,9 @@ void stepperHomingR() {
       // error
       Serial.println("Right homing status invalid");
   }  
+
+  // move to target
+  stepperR.runSpeedToPosition();
 }
 
 void setSpeed() {
