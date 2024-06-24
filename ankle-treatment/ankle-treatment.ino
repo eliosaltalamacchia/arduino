@@ -28,15 +28,15 @@
 #define ROTARY_STEPS 5
 
 // Common parameters for stepper motors (L-R)
-#define SPEED_MIN 100
-#define SPEED_MAX 300
+#define SPEED_MIN 400
+#define SPEED_MAX 600
 
 // Define max upper and lower position
-#define POS_STOP 200
+#define POS_STOP 250
 
 // Homing config
 #define HOMING_MAX 6400 // Define max steps for homing
-#define HOMING_OFFSET 400 // Define steps after reach limit switch
+#define HOMING_OFFSET 500 // Define steps after reach limit switch
 
 // Create a new instance of the AccelStepper class for each stepper
 MultiStepper steppers;
