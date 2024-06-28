@@ -8,11 +8,11 @@
 #include <EEPROM.h>
 #include <elapsedMillis.h>
 
-#define ROTARY_IN1 A2
-#define ROTARY_IN2 A3
+#define ROTARY_IN1 A1
+#define ROTARY_IN2 A2
 #define ROTARY_BUTTON 2
-#define DISPLAY_CLK 4
-#define DISPLAY_DIO 5
+#define DISPLAY_CLK 5
+#define DISPLAY_DIO 6
 #define DFPLAYER_RX 10
 #define DFPLAYER_TX 11
 #define EEPROM_ALARM 0
@@ -28,46 +28,51 @@ RTC_DS3231 rtc;
 
 // 4 - 7 segments display
 TM1637Display display(DISPLAY_CLK, DISPLAY_DIO);
-uint8_t data[] = { 0xff, 0xff, 0xff, 0xff };
-uint8_t blank[] = { 0x00, 0x00, 0x00, 0x00 };
 
 // Setup a RotaryEncoder with 2 steps per latch for the 2 signal input pins:
-RotaryEncoder encoder(ROTARY_IN1, ROTARY_IN2, RotaryEncoder::LatchMode::TWO03);
+RotaryEncoder encoder(ROTARY_IN1, ROTARY_IN2, RotaryEncoder::LatchMode::FOUR3);
 ezButton rotaryButton(ROTARY_BUTTON); 
 
 // mp3 player
 SoftwareSerial softwareSerial(DFPLAYER_RX, DFPLAYER_TX); // RX, TX
 DFRobotDFPlayerMini dfPlayer;
 
-// clock helpers
-String daysOfTheWeek[7] = { "Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado" };
-String monthsNames[12] = { "Enero", "Febrero", "Marzo", "Abril", "Mayo",  "Junio", "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre" };
+// variables saved en EPROM
+int alarm = -1; // saved alarm
+int alarmHr = 0; // configured alarm hour
+int alarmMin = 0; // configured alarm minutes
+bool isAlarmOn = false; // alarm on-off
 
-// To detect long press for config mode
-const int SHORT_PRESS_TIME = 1500; 
-int lastState = HIGH;  // the previous state from the input pin
-int currentState;     // the current reading from the input pin
-unsigned long pressedTime  = 0;
-unsigned long releasedTime = 0;
-bool isConfigMode = false;
-bool isConfigOff = false;
-int alarmHr = 0;
-int alarmMin = 0;
-byte alarmOff = 0;
-enum AlarmState {Alarm, Hour, Minute};
+// states for alarm configuration
+enum ClockState {Clock, ShowAlarm, ConfigAlarm, ConfigOnOff};
+ClockState clockState = Clock;
+enum AlarmConfigState {ConfigHour, ConfigMin};
+AlarmConfigState alarmConfigState = ConfigHour;
+
+// change state in rotary
+int lastPos = 0;
+
+// alarm enabled
+const uint8_t SEG_ON[] = {
+  SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F,   // O
+  SEG_E | SEG_G | SEG_C,  // n
+  SEG_G,   
+  SEG_G   
+};
+
+// alarm disabled
+const uint8_t SEG_OFF[] = {
+  SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F,   // O
+  SEG_A | SEG_F | SEG_G | SEG_E,  // F
+  SEG_A | SEG_F | SEG_G | SEG_E,  // F
+  SEG_G   
+};
 
 // one second info printout timer
 elapsedMillis printTime;
 
+// Print RTC time for debug
 void printDate(DateTime date) {
-  Serial.print(date.year(), DEC);
-  Serial.print('/');
-  Serial.print(date.month(), DEC);
-  Serial.print('/');
-  Serial.print(date.day(), DEC);
-  Serial.print(" (");
-  Serial.print(daysOfTheWeek[date.dayOfTheWeek()]);
-  Serial.print(") ");
   Serial.print(date.hour(), DEC);
   Serial.print(':');
   Serial.print(date.minute(), DEC);
@@ -76,6 +81,7 @@ void printDate(DateTime date) {
   Serial.println();
 }
 
+// Print error messages from mp3 module
 void printDetail(uint8_t type, int value){
   switch (type) {
     case TimeOut:
@@ -131,6 +137,8 @@ void printDetail(uint8_t type, int value){
   }
 }
 
+// Clock mode show current time
+// Dots blinking every second
 void displayTime(DateTime time) {
   static bool isDotsOn = false;
 
@@ -150,7 +158,8 @@ void displayTime(DateTime time) {
   }
 }
 
-void displayAlarm(int alarm) {
+// Show configured alarm blinking
+void displayAlarm() {
   static bool isDotsOn = false;
 
   if (printTime >= 500) {
@@ -158,6 +167,7 @@ void displayAlarm(int alarm) {
     isDotsOn = !isDotsOn;
   }
 
+  // show configured alarm blinking
   if (isDotsOn) {
     // Display the current time in 24 hour format with leading zeros enabled and a center colon
     display.showNumberDecEx(alarm, 0b01000000, true);
@@ -167,6 +177,8 @@ void displayAlarm(int alarm) {
   }
 }
 
+// For config mode show first 2 digit hour 
+// After click show two digits minutes
 void displayTwoDigitsAlarm(int twoDigitsTime, bool leftmost) {
   static bool isDotsOn = false;
 
@@ -184,55 +196,43 @@ void displayTwoDigitsAlarm(int twoDigitsTime, bool leftmost) {
   }
 }
 
-void displayAlarmOff() {
-  // alarm disabled
-  const uint8_t SEG_OFF[] = {
-    SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F,   // O
-    SEG_A | SEG_F | SEG_G | SEG_E,  // F
-    SEG_A | SEG_F | SEG_G | SEG_E,  // F
-    SEG_G   
-    };
-
-  display.setSegments(SEG_OFF);
-  if (rotaryButton.isPressed()) {
-    Serial.println("Alarm disabled");
-    saveAlarm(-1); // disabled
-  }
-}
-
+// Read alarm from arduino's EPROM
+// Read position 0 -> int alarm
+// Read position 2 -> on/off
 int readAlarm() {
-  int alarm = 0;
-  
   EEPROM.get(EEPROM_ALARM, alarm);
-  EEPROM.get(EEPROM_ALARM_STATE, alarmOff);
+  EEPROM.get(EEPROM_ALARM_STATE, isAlarmOn);
   Serial.print("Reading saved alarm: ");
   Serial.print(alarm);
   Serial.print("/");
-  Serial.println(alarmOff);
+  Serial.println(isAlarmOn);
+  Serial.print("Setting alarm to: ");
   if (alarm < 0) {
     // default to current time
     DateTime time = rtc.now();
     alarm = (time.hour() * 100) + time.minute();
+    Serial.print(" default current time ");
   }
-  Serial.print("Setting default alarm to: ");
   Serial.println(alarm);
 
   return alarm;
 }
 
-void saveAlarm(int alarm) {
-  byte off = isConfigOff ? 1 : 0;
+// Save alarm to arduino's EPROM
+// Save position 0 -> int alarm
+// Save position 2 -> on/off
+void saveAlarm() {
+  alarm = alarmHr * 100 + alarmMin; 
   Serial.print("Saving new alarm: ");
   Serial.print(alarm);
   Serial.print("/");
-  Serial.println(off);
+  Serial.println(isAlarmOn);
   EEPROM.put(EEPROM_ALARM, alarm);
-  EEPROM.put(EEPROM_ALARM_STATE, off);
+  EEPROM.put(EEPROM_ALARM_STATE, isAlarmOn);
 }
 
+// Read value from rotary encoder
 int getNewValue(int minValue, int maxValue, int steps) {
-  static int lastPos = 0;
-
   int newPos = encoder.getPosition();
   if (newPos < minValue) {
     encoder.setPosition(minValue / steps);
@@ -244,75 +244,47 @@ int getNewValue(int minValue, int maxValue, int steps) {
   }
 
   if (lastPos != newPos) {
-    // Serial.println(newPos);
+    Serial.println(newPos);
     lastPos = newPos;
   }
 
   return newPos;
 }
 
-bool detectLongPress() {
-  bool isLongPress = false;
-  static int clickCount = 0;
-
-  // read the state of the switch/button:
-  currentState = rotaryButton.getState();
-
-  if(lastState == HIGH && currentState == LOW) {        // button is pressed
-    pressedTime = millis();
-  }
-  else if(lastState == LOW && currentState == HIGH) { // button is released
-    releasedTime = millis();
-    long pressDuration = releasedTime - pressedTime;
-    if(pressDuration > SHORT_PRESS_TIME) {
-      Serial.println("Long press detected");
-      isLongPress = true;
-      isConfigOff = true;
+// Read value from rotary encoder
+void showAlarmEnabledDisabled() {
+  int newPos = encoder.getPosition();
+  if (lastPos != newPos) {
+    if (isAlarmOn) {
+      isAlarmOn = false;
     }
     else {
-      Serial.println("Short press detected");
-      isLongPress = false;
-      clickCount++;
-      if (clickCount == 1) {
-        if (isConfigOff) {
-          isConfigOff = false;
-        }
-        else {
-          isConfigMode = true;
-        }
-      }
-      else if (clickCount == 4) {
-        clickCount = 0;
-        isConfigMode = false;
-      }
+      isAlarmOn = true;
     }
+    lastPos = newPos;
+    Serial.print("Change alarm state: ");
+    Serial.println(isAlarmOn ? "ON" : "OFF");
   }
 
-  // save the the last state
-  lastState = currentState;
-  return isLongPress;
+  if (isAlarmOn) {
+    display.setSegments(SEG_ON);  
+  }
+  else {
+    display.setSegments(SEG_OFF);  
+  }
 }
 
 // Alarm configuration
 // 1 click -> show blinking configured alarm
-// 1 click -> configure hour
+// 1 click -> on/off
+// 1 click -> if off then goto clock mode
+// 1 click -> if on then configure hour
 // 1 click -> configure minutes
 // 1 click -> return to clock
-// 1 long click -> switch from alarm on/off
 void alarmConfig() {
-  static AlarmState state = Alarm;
   int newValue = 0;
 
-  if (state == Alarm) {
-    int alarm = alarmHr * 100 + alarmMin;
-    displayAlarm(alarm);
-    if (rotaryButton.isPressed()) {
-      Serial.println("Changing to hour configuration");
-      encoder.setPosition(alarmHr);
-      state = Hour;
-    }
-  }
-  else if (state == Hour) {
+  if (alarmConfigState == ConfigHour) {
     // show configured alarm (blinking) separating hour and minutes
     newValue = getNewValue(ROTARY_HOUR_MIN, ROTARY_HOUR_MAX, ROTARY_STEPS);
     displayTwoDigitsAlarm(newValue, true);
@@ -320,33 +292,56 @@ void alarmConfig() {
       Serial.println("Change to minutes configuration");
       alarmHr = newValue;
       encoder.setPosition(alarmMin);
-      state = Minute;
-    }   
+      alarmConfigState = ConfigMin;
+    }
   }
-  else if (state == Minute) {
+  else if (alarmConfigState == ConfigMin) {
     // show minutes blinking
     newValue = getNewValue(ROTARY_MINUTE_MIN, ROTARY_MINUTE_MAX, ROTARY_STEPS);
     displayTwoDigitsAlarm(newValue, false);
     if (rotaryButton.isPressed()) {
       Serial.println("Exit alarm config mode");
       alarmMin = newValue;
-      int alarm = alarmHr * 100 + alarmMin;
-      saveAlarm(alarm);
-      state = Alarm;
-    }   
+      alarmConfigState = ConfigHour;
+      clockState = Clock;
+      saveAlarm();
+    }
   }
 }
 
+// Play sound based on configured alarm time
 void playAlarm(DateTime now) {
-  int alarm = readAlarm();
+  static bool isPlaying = false;
+
   int time = (now.hour() * 100) + now.minute();
-  if (time == alarm) {
+  if (time == alarm && isAlarmOn && !isPlaying) {    
     Serial.println("Playing alarm sound");
-    dfPlayer.next();
+    dfPlayer.enableLoopAll();
     if (dfPlayer.available()) {
       printDetail(dfPlayer.readType(), dfPlayer.read());
     } 
+    isPlaying = true;
   }
+  if (rotaryButton.isPressed()) {
+    // stop sounds
+    Serial.println("Stop playing alarm");
+    dfPlayer.pause();
+    isPlaying = false;
+  }
+}
+
+// DFPlayer mp3 module initialization
+void initMp3Player() {
+  softwareSerial.begin(9600);
+  Serial.println(F("Initializing DFPlayer ... (May take 3~5 seconds)"));
+  if (!dfPlayer.begin(softwareSerial)) {  //Use softwareSerial to communicate with mp3.
+    Serial.println(F("Unable to begin:"));
+    Serial.println(F("1.Please recheck the connection!"));
+    Serial.println(F("2.Please insert the SD card!"));
+    // while(true);
+  }
+  Serial.println(F("DFPlayer Mini online."));
+  dfPlayer.volume(15);  //Set volume value. From 0 to 30
 }
 
 void setup() {
@@ -364,48 +359,65 @@ void setup() {
   }
 
   // debounce rotary button
-  rotaryButton.setDebounceTime(50);
+  rotaryButton.setDebounceTime(30);
 
   // Set the display brightness (0-7):
   display.setBrightness(1);
   display.clear();
 
-  // DFPlayer mp3 module initialization
-  // softwareSerial.begin(9600);
-  // Serial.println(F("Initializing DFPlayer ... (May take 3~5 seconds)"));
-  // if (!dfPlayer.begin(softwareSerial)) {  //Use softwareSerial to communicate with mp3.
-  //   Serial.println(F("Unable to begin:"));
-  //   Serial.println(F("1.Please recheck the connection!"));
-  //   Serial.println(F("2.Please insert the SD card!"));
-  //   // while(true);
-  // }
-  // Serial.println(F("DFPlayer Mini online."));
-  // dfPlayer.volume(15);  //Set volume value. From 0 to 30
+  // mp3 player for alarm sounds
+  // initMp3Player();
 
-  // Read configured alarm
-  int alarm = readAlarm();
+  // Read configured alarm from EPROM
+  alarm = readAlarm();
   alarmHr = alarm / 100;
   alarmMin = alarm - (alarmHr * 100);
 }
 
-void loop() {  
-  encoder.tick();
+void loop() {
+  // poll for changes
   rotaryButton.loop(); 
+  encoder.tick();
 
-  bool isLongPress = detectLongPress(); 
-  if (isLongPress || isConfigOff) {
-    // turn off alarm
-    displayAlarmOff();
+  // show time until config
+  if (clockState == Clock) {
+    DateTime now = rtc.now();
+    displayTime(now); // show current time from RTC
+    // playAlarm(now); // check alarm to play mp3
+
+    if (rotaryButton.isPressed()) {
+      Serial.println("Showing alarm");
+      clockState = ShowAlarm;
+      lastPos = 0;
+      encoder.setPosition(lastPos);
+    }
   }
-  else {
-    if (isConfigMode) {
-      // show configured alarm
-      alarmConfig();
+  else if (clockState == ShowAlarm) {
+    // show configured alarm blinking
+    displayAlarm();
+    if (rotaryButton.isPressed()) {
+      Serial.println("Enable/disable alarm");
+      clockState = ConfigOnOff;
     }
-    else {
-      // show current time from RTC
-      DateTime now = rtc.now();
-      displayTime(now);
+  }
+  else if (clockState == ConfigOnOff) {
+    // show on/off
+    showAlarmEnabledDisabled();
+    if (rotaryButton.isPressed()) {
+      if (isAlarmOn) {
+        Serial.println("Enter alarm config mode");
+        encoder.setPosition(alarmHr);
+        clockState = ConfigAlarm;
+      }
+      else {
+        Serial.println("Alarm disabled, return to clock mode");
+        saveAlarm();
+        clockState = Clock;
+      }
     }
+  }
+  else if (clockState == ConfigAlarm) {
+    // change alarm configuration
+    alarmConfig();
   }
 }
