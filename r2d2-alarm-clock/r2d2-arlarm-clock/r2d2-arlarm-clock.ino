@@ -42,6 +42,7 @@ int alarm = -1; // saved alarm
 int alarmHr = 0; // configured alarm hour
 int alarmMin = 0; // configured alarm minutes
 bool isAlarmOn = false; // alarm on-off
+bool isPlaying = false; 
 
 // states for alarm configuration
 enum ClockState {Clock, ShowAlarm, ConfigAlarm, ConfigOnOff};
@@ -311,22 +312,24 @@ void alarmConfig() {
 
 // Play sound based on configured alarm time
 void playAlarm(DateTime now) {
-  static bool isPlaying = false;
+  static bool waitNext = false;
 
-  int time = (now.hour() * 100) + now.minute();
-  if (time == alarm && isAlarmOn && !isPlaying) {    
-    Serial.println("Playing alarm sound");
-    dfPlayer.enableLoopAll();
-    if (dfPlayer.available()) {
-      printDetail(dfPlayer.readType(), dfPlayer.read());
-    } 
-    isPlaying = true;
-  }
-  if (rotaryButton.isPressed()) {
-    // stop sounds
-    Serial.println("Stop playing alarm");
-    dfPlayer.pause();
-    isPlaying = false;
+  if (isAlarmOn && !isPlaying) {
+    int time = (now.hour() * 100) + now.minute();
+    if (time == alarm) {
+      if (!waitNext) {
+        Serial.println("Playing alarm sound");
+        dfPlayer.next();
+        if (dfPlayer.available()) {
+          printDetail(dfPlayer.readType(), dfPlayer.read());
+        } 
+        isPlaying = true; // wait until button press to stop
+        waitNext = true; // play cycle once during the same minute
+      }    
+    }
+    else {
+      waitNext = false;
+    }
   }
 }
 
@@ -338,10 +341,11 @@ void initMp3Player() {
     Serial.println(F("Unable to begin:"));
     Serial.println(F("1.Please recheck the connection!"));
     Serial.println(F("2.Please insert the SD card!"));
-    // while(true);
+    while(true);
   }
   Serial.println(F("DFPlayer Mini online."));
-  dfPlayer.volume(15);  //Set volume value. From 0 to 30
+  dfPlayer.volume(20);  //Set volume value. From 0 to 30
+  dfPlayer.enableLoopAll();
 }
 
 void setup() {
@@ -362,11 +366,11 @@ void setup() {
   rotaryButton.setDebounceTime(30);
 
   // Set the display brightness (0-7):
-  display.setBrightness(1);
+  display.setBrightness(3);
   display.clear();
 
   // mp3 player for alarm sounds
-  // initMp3Player();
+  initMp3Player();
 
   // Read configured alarm from EPROM
   alarm = readAlarm();
@@ -375,21 +379,30 @@ void setup() {
 }
 
 void loop() {
+
   // poll for changes
   rotaryButton.loop(); 
   encoder.tick();
-
+  
   // show time until config
   if (clockState == Clock) {
     DateTime now = rtc.now();
     displayTime(now); // show current time from RTC
-    // playAlarm(now); // check alarm to play mp3
+    playAlarm(now); // check alarm and play mp3
 
     if (rotaryButton.isPressed()) {
-      Serial.println("Showing alarm");
-      clockState = ShowAlarm;
-      lastPos = 0;
-      encoder.setPosition(lastPos);
+      if (isPlaying) {
+        // is playing alarm then stop playing mp3
+        Serial.println("Stopping alarm sounds");
+        dfPlayer.stop();
+        isPlaying = false;
+      }
+      else {
+        Serial.println("Showing alarm");
+        clockState = ShowAlarm;
+        lastPos = 0;
+        encoder.setPosition(lastPos);
+      }
     }
   }
   else if (clockState == ShowAlarm) {
