@@ -6,6 +6,7 @@
 #include <SoftwareSerial.h>
 #include <DFRobotDFPlayerMini.h>
 #include <EEPROM.h>
+#include <LED.h>
 #include <elapsedMillis.h>
 
 #define ROTARY_IN1 A1
@@ -22,6 +23,11 @@
 #define ROTARY_HOUR_MAX 23
 #define ROTARY_MINUTE_MIN 0
 #define ROTARY_MINUTE_MAX 59
+#define LED_BLANK 3
+#define LED_RED 8
+#define LED_BLUE 9
+#define LED_INTERVAL 2000
+#define LED_DURATION 1000
 
 // RTC_DS1307 rtc;
 RTC_DS3231 rtc;
@@ -36,6 +42,11 @@ ezButton rotaryButton(ROTARY_BUTTON);
 // mp3 player
 SoftwareSerial softwareSerial(DFPLAYER_RX, DFPLAYER_TX); // RX, TX
 DFRobotDFPlayerMini dfPlayer;
+
+// head leads
+LED ledBlank(LED_BLANK);
+LED ledRed(LED_RED);
+LED ledBlue(LED_BLUE);
 
 // variables saved en EPROM
 int alarm = -1; // saved alarm
@@ -318,11 +329,12 @@ void playAlarm(DateTime now) {
     int time = (now.hour() * 100) + now.minute();
     if (time == alarm) {
       if (!waitNext) {
+        // play mp3
         Serial.println("Playing alarm sound");
         dfPlayer.next();
         if (dfPlayer.available()) {
           printDetail(dfPlayer.readType(), dfPlayer.read());
-        } 
+        }         
         isPlaying = true; // wait until button press to stop
         waitNext = true; // play cycle once during the same minute
       }    
@@ -372,6 +384,11 @@ void setup() {
   // mp3 player for alarm sounds
   initMp3Player();
 
+  // led flash interval
+  ledBlank.begin(LED_INTERVAL);
+  ledRed.begin(LED_INTERVAL);
+  ledBlue.begin(LED_INTERVAL);
+  
   // Read configured alarm from EPROM
   alarm = readAlarm();
   alarmHr = alarm / 100;
@@ -390,11 +407,20 @@ void loop() {
     displayTime(now); // show current time from RTC
     playAlarm(now); // check alarm and play mp3
 
+    if (isPlaying) {
+      ledBlank.flash(0, LED_DURATION);
+      ledRed.flash(0, LED_DURATION);
+      ledBlue.on();
+    }
+
     if (rotaryButton.isPressed()) {
       if (isPlaying) {
         // is playing alarm then stop playing mp3
         Serial.println("Stopping alarm sounds");
         dfPlayer.stop();
+        ledBlank.off();
+        ledRed.off();
+        ledBlue.off();
         isPlaying = false;
       }
       else {
