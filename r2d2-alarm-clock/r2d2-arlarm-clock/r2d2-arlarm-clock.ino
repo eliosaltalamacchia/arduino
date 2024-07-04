@@ -14,6 +14,8 @@
 #define ROTARY_BUTTON 2
 #define DISPLAY_CLK 5
 #define DISPLAY_DIO 6
+#define DISPLAY_BRIGHTNESS_MIN 1
+#define DISPLAY_BRIGHTNESS_MAX 15
 #define DFPLAYER_RX 10
 #define DFPLAYER_TX 11
 #define EEPROM_ALARM 0
@@ -334,7 +336,8 @@ void playAlarm(DateTime now) {
         dfPlayer.next();
         if (dfPlayer.available()) {
           printDetail(dfPlayer.readType(), dfPlayer.read());
-        }         
+        }
+        display.setBrightness(DISPLAY_BRIGHTNESS_MAX);         
         isPlaying = true; // wait until button press to stop
         waitNext = true; // play cycle once during the same minute
       }    
@@ -370,15 +373,16 @@ void setup() {
   }
 
   // set date/time
-  if (rtc.lostPower()) {
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  }
+  rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  // if (rtc.lostPower()) {
+  //   rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  // }
 
   // debounce rotary button
   rotaryButton.setDebounceTime(30);
 
   // Set the display brightness (0-7):
-  display.setBrightness(3);
+  display.setBrightness(DISPLAY_BRIGHTNESS_MIN);
   display.clear();
 
   // mp3 player for alarm sounds
@@ -421,6 +425,7 @@ void loop() {
         ledBlank.off();
         ledRed.off();
         ledBlue.off();
+        display.setBrightness(DISPLAY_BRIGHTNESS_MIN);
         isPlaying = false;
       }
       else {
