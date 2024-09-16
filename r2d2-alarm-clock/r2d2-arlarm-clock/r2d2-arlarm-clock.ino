@@ -14,8 +14,8 @@
 #define ROTARY_BUTTON 2
 #define DISPLAY_CLK 5
 #define DISPLAY_DIO 6
-#define DISPLAY_BRIGHTNESS_MIN 1
-#define DISPLAY_BRIGHTNESS_MAX 15
+#define DISPLAY_BRIGHTNESS_MIN 0
+#define DISPLAY_BRIGHTNESS_MAX 7
 #define DFPLAYER_RX 10
 #define DFPLAYER_TX 11
 #define EEPROM_ALARM 0
@@ -374,9 +374,9 @@ void setup() {
 
   // set date/time
   rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  // if (rtc.lostPower()) {
-  //   rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  // }
+  if (rtc.lostPower()) {
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
 
   // debounce rotary button
   rotaryButton.setDebounceTime(30);
