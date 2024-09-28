@@ -7,16 +7,16 @@
 #include <ezButton.h>
 #include <LED.h>
 
-#define LED_STRIP_PIN 1
+#define LED_STRIP_PIN 6
 #define NUMPIXELS 130
 #define DELAYVAL 10 // Time (in milliseconds) to pause between pixels
 #define BRIGHTNESS 125 // Set BRIGHTNESS (max = 255)
 
-#define DFPLAYER_RX 20
-#define DFPLAYER_TX 21
-#define DFPLAYER_VOLUME 10 //Set volume value. From 0 to 30
+#define DFPLAYER_RX 4
+#define DFPLAYER_TX 3
+#define DFPLAYER_VOLUME 25 //Set volume value. From 0 to 30
 
-#define BUTTON_LED_PIN 2 // on-off switch
+#define BUTTON_LED_PIN 7 // on-off switch
 
 // Argument 1 = Number of pixels in NeoPixel strip
 // Argument 2 = Arduino pin number (most are valid)
@@ -36,6 +36,8 @@ float movementThreshold = 0.5;
 // mp3 player
 SoftwareSerial softwareSerial(DFPLAYER_RX, DFPLAYER_TX); // RX, TX
 DFRobotDFPlayerMini dfPlayer;
+int swingSound = 3;
+int clashSound = 5;
 
 // on-off led
 LED buttonLed(BUTTON_LED_PIN);
@@ -113,6 +115,7 @@ void printMp3ErrorDetail(uint8_t type, int value){
 // Accelormeter & gyro initialization
 void initMPU6050() {
   // Try to initialize MPU6050
+  Serial.println("Searching for MPU6050...");
   if (!mpu.begin()) {
     Serial.println("Failed to find MPU6050 chip");
     while (true) {
@@ -123,7 +126,7 @@ void initMPU6050() {
 
   //setupt motion detection
   mpu.setHighPassFilter(MPU6050_HIGHPASS_0_63_HZ);
-  mpu.setMotionDetectionThreshold(10);
+  mpu.setMotionDetectionThreshold(20);
   mpu.setMotionDetectionDuration(1);
   mpu.setInterruptPinLatch(true);	// Keep it latched.  Will turn off when reinitialized.
   mpu.setInterruptPinPolarity(true);
@@ -180,42 +183,30 @@ void motionDetected() {
   float diffAX, diffAY, diffAZ;
   float diffGX, diffGY, diffGZ;
 
-  if(mpu.getMotionInterruptStatus()) {
-    /* Get new sensor events with the readings */
-    mpu.getEvent(&ca, &cg, &ctemp);
+  /* Get new sensor events with the readings */
+  mpu.getEvent(&ca, &cg, &ctemp);
+  // printMotionDetected(ca, cg);
 
-    // calculate movement threshold
-    diffAX = ca.acceleration.x - pa.acceleration.x;
-    diffAY = ca.acceleration.y - pa.acceleration.y;
-    diffAZ = ca.acceleration.z - pa.acceleration.z;
-    diffGX = cg.gyro.x - pg.gyro.x;
-    diffGY = cg.gyro.y - pg.gyro.y;
-    diffGZ = cg.gyro.z - pg.gyro.z;
-    printMotionDiff(diffAX, diffAY, diffAZ, diffGX, diffGY, diffGZ);
+  // calculate movement threshold
+  diffAX = ca.acceleration.x - pa.acceleration.x;
+  diffAY = ca.acceleration.y - pa.acceleration.y;
+  diffAZ = ca.acceleration.z - pa.acceleration.z;
+  diffGX = cg.gyro.x - pg.gyro.x;
+  diffGY = cg.gyro.y - pg.gyro.y;
+  diffGZ = cg.gyro.z - pg.gyro.z;
+  // printMotionDiff(diffAX, diffAY, diffAZ, diffGX, diffGY, diffGZ);
 
-    // choose sound to play
-    int sound;
-    if (diffAX >= movementThreshold) {
-    }
-    if (diffAY >= movementThreshold) {
-    }
-    if (diffAZ >= movementThreshold) {
-    }
-    if (diffGX >= movementThreshold) {
-      sound = 3;
-    }
-    if (diffGY >= movementThreshold) {
-      sound = 4;
-    }
-    if (diffGZ >= movementThreshold) {
-      sound = 5;
-    }
+  // movement detected
+  if (diffAX > movementThreshold || diffAY > movementThreshold || diffAZ > movementThreshold) {
+    Serial.println("Movement detected");
 
     // play selected sound
     if (dfPlayer.readState() != -1) {
-      Serial.print("Playing sound: ");
-      Serial.println(sound);
-      dfPlayer.play(sound);
+      dfPlayer.play(swingSound);
+      if (swingSound == 3)
+        swingSound = 4;
+      else
+        swingSound = 3;
     }
 
     // save current values 
@@ -223,14 +214,18 @@ void motionDetected() {
     pg = cg;
     ptemp = ctemp;
   }
-  else {
-    // play idle value
-    // if (dfPlayer.readState() != -1) {
-    //   dfPlayer.play(2);
-    // }
+
+  // clash detection
+  if(mpu.getMotionInterruptStatus()) {
+    Serial.println("Clash detected");
+    dfPlayer.stop();
+    dfPlayer.play(clashSound);
   }
 
-  delay(10);
+  // play hum value continously
+  if (dfPlayer.readState() != -1) {
+    dfPlayer.play(2);
+  }
 }
 
 void colorWipe(uint32_t color, int wait) {
@@ -287,12 +282,12 @@ void turnOn() {
 }
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   Serial.println("dark-saber loading ...");
   buttonLed.on();
+  initMPU6050();
   initMp3Player();
   turnOn();
-  initMPU6050();
 }
 
 void loop() {
