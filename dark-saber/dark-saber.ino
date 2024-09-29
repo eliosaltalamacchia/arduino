@@ -37,7 +37,7 @@ float movementThreshold = 0.5;
 SoftwareSerial softwareSerial(DFPLAYER_RX, DFPLAYER_TX); // RX, TX
 DFRobotDFPlayerMini dfPlayer;
 int swingSound = 3;
-int clashSound = 5;
+int clashSound = 6;
 
 // on-off led
 LED buttonLed(BUTTON_LED_PIN);
@@ -126,7 +126,7 @@ void initMPU6050() {
 
   //setupt motion detection
   mpu.setHighPassFilter(MPU6050_HIGHPASS_0_63_HZ);
-  mpu.setMotionDetectionThreshold(20);
+  mpu.setMotionDetectionThreshold(15);
   mpu.setMotionDetectionDuration(1);
   mpu.setInterruptPinLatch(true);	// Keep it latched.  Will turn off when reinitialized.
   mpu.setInterruptPinPolarity(true);
@@ -203,10 +203,8 @@ void motionDetected() {
     // play selected sound
     if (dfPlayer.readState() != -1) {
       dfPlayer.play(swingSound);
-      if (swingSound == 3)
-        swingSound = 4;
-      else
-        swingSound = 3;
+      swingSound = swingSound +1;
+      if (swingSound == 6) swingSound = 3;
     }
 
     // save current values 
@@ -220,6 +218,8 @@ void motionDetected() {
     Serial.println("Clash detected");
     dfPlayer.stop();
     dfPlayer.play(clashSound);
+    clashSound = clashSound +1;
+    if (clashSound == 10) clashSound = 6;
   }
 
   // play hum value continously
