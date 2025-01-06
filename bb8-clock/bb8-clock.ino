@@ -1,14 +1,18 @@
 #include <lvgl.h>
-#include <TFT_eSPI.h>
 #include "lv_conf.h"
 #include "CST816S.h"
-#include "ui.h"
+#include <TFT_eSPI.h>
 #include <WiFi.h>
 #include <time.h>
 #include <sntp.h>
 #include <sstream>
 #include <iomanip>
+#include <ezLED.h>
+#include "DFRobotDFPlayerMini.h"
+#include <SoftwareSerial.h>
+#include "ui.h"
 #include "images.h"
+#include "screens.h"
 
 #if CONFIG_FREERTOS_UNICORE
 #define ARDUINO_RUNNING_CORE 0
@@ -16,8 +20,19 @@
 #define ARDUINO_RUNNING_CORE 1
 #endif
 
-#define EXAMPLE_LVGL_TICK_PERIOD_MS    2
+// definitions for mp3 dfplayer
+#if (defined(ARDUINO_AVR_UNO) || defined(ESP8266))   // Using a soft serial port
+#include <SoftwareSerial.h>
+SoftwareSerial softSerial(/*rx =*/4, /*tx =*/5);
+#define FPSerial softSerial
+#else
+#define FPSerial Serial1
+#endif
 
+#define EXAMPLE_LVGL_TICK_PERIOD_MS 10
+TaskHandle_t analog_read_task_handle; // You can (don't have to) use this to be able to manipulate a task from somewhere else.
+
+// ntp date-time syncronization
 const char* ntpServer1 = "pool.ntp.org";
 const char* ntpServer2 = "time.nist.gov";
 const long  gmtOffset_sec = 3600;
@@ -26,25 +41,28 @@ const char* time_zone = "CET-1CEST,M3.5.0,M10.5.0/3";  // TimeZone rule for Euro
 struct tm timeinfo; 
 bool isReady = false;
 
+// available background images
 const lv_img_dsc_t backgrounds[] = {img_star_wars_bg_1, img_star_wars_bg_2, img_star_wars_bg_3};
 
-TaskHandle_t analog_read_task_handle; // You can (don't have to) use this to be able to manipulate a task from somewhere else.
+// mp3 player instance
+DFRobotDFPlayerMini myDFPlayer;
 
-// Replace with your network credentials
-const char* ssid = "elios_Guest";
-const char* password = "#elios2024@";
-// const char* ssid = "Sh";
-// const char* password = "p26cYXkJ4nKP";
+// wi-fi connection
+// replace with your network credentials
+const char* ssid = "e@@@";
+const char* password = "#@@@@";
 
 /*Change to your screen resolution*/
 static const uint16_t screenWidth  = 240;
 static const uint16_t screenHeight = 240;
-
 static lv_disp_draw_buf_t draw_buf;
 static lv_color_t buf[ screenWidth * screenHeight / 10 ];
-
 TFT_eSPI tft = TFT_eSPI(screenWidth, screenHeight); /* TFT instance */
 CST816S touch(6, 7, 13, 5);	// sda, scl, rst, irq
+
+// head leds pins
+ezLED ledBlue(21);
+ezLED ledRed(18);
 
 #if LV_USE_LOG != 0
 /* Serial debugging */
@@ -110,8 +128,13 @@ void my_touchpad_read( lv_indev_drv_t * indev_drv, lv_indev_data_t * data )
       Serial.print(touch.data.y);
       Serial.println(")");
 
-      lv_img_set_src(objects.background, &backgrounds[next++]);
-      if (next == (sizeof(backgrounds) / sizeof(lv_img_dsc_t))) next = 0;
+      // lv_img_set_src(objects.background, &backgrounds[next++]);
+      // if (next == (sizeof(backgrounds) / sizeof(lv_img_dsc_t))) next = 0;
+
+      // ledRed.turnON();
+      // ledBlue.turnON();
+      // myDFPlayer.play(1);  //Play the first mp3
+
     }
 }
 
@@ -179,28 +202,50 @@ void updateBlink(void *pvParameters)
   }
 }
 
-void action_change_background(lv_event_t * event)
+void initMP3()
 {
-  static int bg = 1;
-  Serial.println(bg);
-  switch (bg) {
-    case 1:
-      lv_img_set_src(objects.background, &img_star_wars_bg_1);
-      break;
-    case 2:
-      lv_img_set_src(objects.background, &img_star_wars_bg_2);
-      break;
-    case 3:
-      lv_img_set_src(objects.background, &img_star_wars_bg_3);
-      bg = 0;
-      break;
+#if (defined ESP32)
+  FPSerial.begin(9600, SERIAL_8N1, /*rx =*/16, /*tx =*/17);
+#else
+  FPSerial.begin(9600);
+#endif
+
+  Serial.println(F("DFRobot DFPlayer Mini Demo"));
+  Serial.println(F("Initializing DFPlayer ... (May take 3~5 seconds)"));
+  
+  if (!myDFPlayer.begin(FPSerial, /*isACK = */true, /*doReset = */true)) {  //Use serial to communicate with mp3.
+    Serial.println(F("Unable to begin:"));
+    Serial.println(F("1.Please recheck the connection!"));
+    Serial.println(F("2.Please insert the SD card!"));
+    while(true){
+      delay(0); // Code to compatible with ESP8266 watch dog.
+    }
   }
-  bg++;
+  Serial.println(F("DFPlayer Mini online."));
+  
+  myDFPlayer.volume(10);  //Set volume value. From 0 to 30
 }
 
-void action_night_mode(lv_event_t * event)
+void fillAlarmOptions()
 {
-  Serial.println("action_night_mode");
+  std::stringstream ss;
+  
+  // fill hours
+  for (int i = 0; i < 24; i++)
+  {
+    ss << std::setfill('0') << std::setw(2) << i << "\n";
+  }
+  ss.str().erase(ss.str().length() - 1); // remove last CRLF  
+  lv_roller_set_options(objects.hour_alarm, ss.str().c_str(), LV_ROLLER_MODE_NORMAL);
+  ss.str("");
+
+  // fill minutes
+  for (int i = 0; i < 60; i++)
+  {
+    ss << std::setfill('0') << std::setw(2) << i << "\n";
+  }
+  ss.str().erase(ss.str().length() - 1);  
+  lv_roller_set_options(objects.min_alarm, ss.str().c_str(), LV_ROLLER_MODE_NORMAL);
 }
 
 void setup()
@@ -302,6 +347,8 @@ void setup()
   xTaskCreate(updateBlink, "Blink dots", 2048, (void*) &call_delay, 2, NULL);
 
   printLocalTime();
+  initMP3();
+  fillAlarmOptions();
 
   Serial.println( "Setup done" );
 }
@@ -309,5 +356,8 @@ void setup()
 void loop()
 {
   lv_timer_handler(); /* let the GUI do its work */
-  delay(1000);
+  ui_tick();
+  ledBlue.loop();
+  ledRed.loop();
+  delay(EXAMPLE_LVGL_TICK_PERIOD_MS);
 }

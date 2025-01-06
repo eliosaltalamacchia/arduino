@@ -7,11 +7,7 @@
 extern "C" {
 #endif
 
-extern const lv_font_t ui_font_orbitron_bold_24;
 extern const lv_font_t ui_font_orbitron_bold_20;
-extern const lv_font_t ui_font_orbitron_bold_64;
-extern const lv_font_t ui_font_orbitron_bold_62;
-extern const lv_font_t ui_font_orbitron_bold_60;
 extern const lv_font_t ui_font_orbitron_bold_54;
 
 
