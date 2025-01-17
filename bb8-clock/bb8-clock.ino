@@ -14,6 +14,11 @@
 #include "images.h"
 #include "screens.h"
 
+// void action_blink_leds(lv_event_t * event);
+// void action_change_background(lv_event_t * event);
+// void action_change_volume(lv_event_t * event);
+
+// for esp32 tasks
 #if CONFIG_FREERTOS_UNICORE
 #define ARDUINO_RUNNING_CORE 0
 #else
@@ -30,29 +35,33 @@ SoftwareSerial softSerial(/*rx =*/4, /*tx =*/5);
 #endif
 
 #define EXAMPLE_LVGL_TICK_PERIOD_MS 10
-TaskHandle_t analog_read_task_handle; // You can (don't have to) use this to be able to manipulate a task from somewhere else.
+#define LED_RED 18
+#define LED_BLUE 21
+#define LED_RED_BLINK_ON 500
+#define LED_BLUE_BLINK_ON 1000
+#define LED_BLINK_OFF 250
+#define LED_BLINK_INTERVAL 5000
 
-// ntp date-time syncronization
+// ntp date & time syncronization
 const char* ntpServer1 = "pool.ntp.org";
 const char* ntpServer2 = "time.nist.gov";
 const long  gmtOffset_sec = 3600;
 const int   daylightOffset_sec = 3600;
 const char* time_zone = "CET-1CEST,M3.5.0,M10.5.0/3";  // TimeZone rule for Europe/Rome including daylight adjustment rules (optional)
-struct tm timeinfo; 
+struct tm timeinfo; // current datetime info
 bool isReady = false;
 
-// available background images
+// available background images to use
 const lv_img_dsc_t backgrounds[] = {img_star_wars_bg_1, img_star_wars_bg_2, img_star_wars_bg_3};
 
 // mp3 player instance
 DFRobotDFPlayerMini myDFPlayer;
 
-// wi-fi connection
-// replace with your network credentials
-const char* ssid = "e@@@";
-const char* password = "#@@@@";
+// wi-fi configuration
+const char* ssid = "elios_Guest";
+const char* password = "#elios2024@";
 
-/*Change to your screen resolution*/
+// lvgl screen configuration
 static const uint16_t screenWidth  = 240;
 static const uint16_t screenHeight = 240;
 static lv_disp_draw_buf_t draw_buf;
@@ -61,8 +70,11 @@ TFT_eSPI tft = TFT_eSPI(screenWidth, screenHeight); /* TFT instance */
 CST816S touch(6, 7, 13, 5);	// sda, scl, rst, irq
 
 // head leds pins
-ezLED ledBlue(21);
-ezLED ledRed(18);
+ezLED ledBlue(LED_BLUE);
+ezLED ledRed(LED_RED);
+
+// state to indicate alarm is playing mp3 & lights
+bool isPlaying = false;
 
 #if LV_USE_LOG != 0
 /* Serial debugging */
@@ -102,7 +114,7 @@ void example_increase_reboot(void *arg)
   }
 }
 
-/*Read the touchpad*/
+/* Read the touchpad */
 void my_touchpad_read( lv_indev_drv_t * indev_drv, lv_indev_data_t * data )
 {
     static int next = 1; // start with 1 for the first change
@@ -122,22 +134,24 @@ void my_touchpad_read( lv_indev_drv_t * indev_drv, lv_indev_data_t * data )
       /*Set the coordinates*/
       data->point.x = touch.data.x;
       data->point.y = touch.data.y;
-      Serial.print("(");
-      Serial.print(touch.data.x);
-      Serial.print(", ");
-      Serial.print(touch.data.y);
-      Serial.println(")");
+      // Serial.print("(");
+      // Serial.print(touch.data.x);
+      // Serial.print(", ");
+      // Serial.print(touch.data.y);
+      // Serial.println(")");
 
-      // lv_img_set_src(objects.background, &backgrounds[next++]);
-      // if (next == (sizeof(backgrounds) / sizeof(lv_img_dsc_t))) next = 0;
-
-      // ledRed.turnON();
-      // ledBlue.turnON();
-      // myDFPlayer.play(1);  //Play the first mp3
-
+      // turn off leds & stop mp3
+      if (isPlaying)
+      {
+        ledBlue.turnOFF();
+        ledRed.turnOFF();
+        myDFPlayer.stop();
+        isPlaying = false;
+      }
     }
 }
 
+// get local datetime from ntp server and print it in the screen
 void printLocalTime()
 {
   struct tm timeinfo;
@@ -173,35 +187,7 @@ void timeavailable(struct timeval *t)
   printLocalTime();
 }
 
-void updateBlink(void *pvParameters)
-{
-  static int seconds = 0;
-  static bool isOn = true; // isOn is used to blink clock dots
-  uint32_t call_delay = *((uint32_t*)pvParameters);
-
-  for (;;)
-  {
-    // blink dots & update seconds bar
-    lv_arc_set_value(objects.seconds, seconds++);
-    lv_label_set_text(objects.dots, isOn ? ":" : "");
-    isOn = !isOn;
-    
-    if(seconds == 60)
-    {
-      seconds = 0;
-      printLocalTime(); // update every minute
-    }
-
-    // get time every second until first update    
-    if (!isReady)
-    {
-      printLocalTime();
-    }
-    
-    delay(call_delay);
-  }
-}
-
+// DF player mini initialization
 void initMP3()
 {
 #if (defined ESP32)
@@ -223,14 +209,14 @@ void initMP3()
   }
   Serial.println(F("DFPlayer Mini online."));
   
-  myDFPlayer.volume(10);  //Set volume value. From 0 to 30
+  myDFPlayer.volume(30);  //Set volume value. From 0 to 30
 }
 
 void fillAlarmOptions()
 {
   std::stringstream ss;
   
-  // fill hours
+  // fill hours (0-23)
   for (int i = 0; i < 24; i++)
   {
     ss << std::setfill('0') << std::setw(2) << i << "\n";
@@ -239,13 +225,126 @@ void fillAlarmOptions()
   lv_roller_set_options(objects.hour_alarm, ss.str().c_str(), LV_ROLLER_MODE_NORMAL);
   ss.str("");
 
-  // fill minutes
+  // fill minutes (0-59)
   for (int i = 0; i < 60; i++)
   {
     ss << std::setfill('0') << std::setw(2) << i << "\n";
   }
   ss.str().erase(ss.str().length() - 1);  
   lv_roller_set_options(objects.min_alarm, ss.str().c_str(), LV_ROLLER_MODE_NORMAL);
+}
+
+// change background images based on roller selection
+void action_change_background(lv_event_t * e)
+{
+  lv_event_code_t code = lv_event_get_code(e);
+  lv_obj_t * obj = lv_event_get_target(e);
+  if(code == LV_EVENT_VALUE_CHANGED) {
+    char buf[2];
+    lv_roller_get_selected_str(obj, buf, sizeof(buf));
+    int next = atoi(buf) - 1;
+    lv_obj_set_style_bg_img_src(objects.main, &backgrounds[next], LV_PART_MAIN | LV_STATE_DEFAULT);    
+  }  
+}
+
+void action_blink_leds(lv_event_t * event)
+{
+  if (lv_obj_has_state(objects.switch_leds, LV_STATE_CHECKED))
+  {
+    ledRed.blinkInPeriod(LED_RED_BLINK_ON, LED_BLINK_OFF, LED_BLINK_INTERVAL); 
+    ledBlue.blinkInPeriod(LED_BLUE_BLINK_ON, LED_BLINK_OFF, LED_BLINK_INTERVAL);
+    lv_led_set_brightness(objects.led_red, 255);
+    lv_led_set_brightness(objects.led_blue, 255);
+  }
+  else
+  {
+    lv_led_set_brightness(objects.led_red, 100);
+    lv_led_set_brightness(objects.led_blue, 100);
+  }
+}
+
+void action_change_volume(lv_event_t * event)
+{
+    lv_obj_t * slider = lv_event_get_target(event);
+    int volume = (int)lv_slider_get_value(slider);
+    myDFPlayer.volume(volume);
+    delay(1000);
+    myDFPlayer.play(2);
+}
+
+void checkAlarm()
+{
+  char bufHour[3];
+  char bufMin[3];
+  Serial.println("Checking for alarm settings...");
+  
+  // check if alarm is enabled
+  if (lv_obj_has_state(objects.alarm, LV_STATE_CHECKED))
+  {
+    Serial.println("Alarm is enabled");
+    lv_roller_get_selected_str(objects.hour_alarm, bufHour, sizeof(bufHour));
+    lv_roller_get_selected_str(objects.min_alarm, bufMin, sizeof(bufMin));
+    
+    // check hour & minutes agains configured alarm
+    Serial.print("Current time: ");
+    Serial.print(lv_label_get_text(objects.hour));
+    Serial.print(":");
+    Serial.println(lv_label_get_text(objects.minutes));
+    Serial.print("Alarm time: ");
+    Serial.print(bufHour);
+    Serial.print(":");
+    Serial.println(bufMin);
+    if (strcmp(bufHour, lv_label_get_text(objects.hour)) == 0 
+      && strcmp(bufMin, lv_label_get_text(objects.minutes)) == 0)
+    {
+      // blink leds 
+      Serial.println("Blinking leds...");
+      ledBlue.blink(LED_BLUE_BLINK_ON, LED_BLINK_OFF);
+      ledRed.blink(LED_RED_BLINK_ON, LED_BLINK_OFF);
+
+      // play first mp3
+      Serial.println("Playing sound...");
+      myDFPlayer.play(1);
+
+      // change state to playing
+      isPlaying = true;
+    }
+  }
+}
+
+void updateBlink(void *pvParameters)
+{
+  static int seconds = 0;
+  static bool isOn = true; // isOn is used to blink clock dots
+  uint32_t call_delay = *((uint32_t*)pvParameters);
+
+  for (;;)
+  {
+    // blink dots & update seconds bar
+    lv_arc_set_value(objects.seconds, seconds++);
+    lv_label_set_text(objects.dots, isOn ? ":" : "");
+    isOn = !isOn;
+    
+    if(seconds == 60)
+    {
+      seconds = 0;
+      
+      // update date & time every minute
+      printLocalTime();
+
+      // check alarm after update
+      checkAlarm(); 
+    }
+    else {
+      // get time every second until first update    
+      if (!isReady)
+      {
+        printLocalTime();
+      }
+    }
+    
+    delay(call_delay);
+  }
 }
 
 void setup()
