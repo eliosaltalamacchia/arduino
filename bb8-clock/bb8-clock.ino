@@ -53,8 +53,8 @@ const lv_img_dsc_t backgrounds[] = {img_star_wars_bg_1, img_star_wars_bg_2, img_
 DFRobotDFPlayerMini myDFPlayer;
 
 // wi-fi configuration
-const char* ssid = "elios_Guest";
-const char* password = "#elios2024@";
+const char* ssid = "*******";
+const char* password = "************";
 
 // lvgl screen configuration
 static const uint16_t screenWidth  = 240;
