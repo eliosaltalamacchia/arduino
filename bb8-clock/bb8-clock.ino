@@ -1,5 +1,5 @@
+#include <lv_conf.h>
 #include <lvgl.h>
-#include "lv_conf.h"
 #include "CST816S.h"
 #include <TFT_eSPI.h>
 #include <WiFi.h>
@@ -13,10 +13,6 @@
 #include "ui.h"
 #include "images.h"
 #include "screens.h"
-
-// void action_blink_leds(lv_event_t * event);
-// void action_change_background(lv_event_t * event);
-// void action_change_volume(lv_event_t * event);
 
 // for esp32 tasks
 #if CONFIG_FREERTOS_UNICORE
@@ -47,7 +43,6 @@ const char* ntpServer1 = "pool.ntp.org";
 const char* ntpServer2 = "time.nist.gov";
 const long  gmtOffset_sec = 3600;
 const int   daylightOffset_sec = 3600;
-const char* time_zone = "CET-1CEST,M3.5.0,M10.5.0/3";  // TimeZone rule for Europe/Rome including daylight adjustment rules (optional)
 struct tm timeinfo; // current datetime info
 bool isReady = false;
 
@@ -75,13 +70,21 @@ ezLED ledRed(LED_RED);
 
 // state to indicate alarm is playing mp3 & lights
 bool isPlaying = false;
+bool alarmEnabled = false;
 
-#if LV_USE_LOG != 0
-/* Serial debugging */
-void my_print(const char * buf)
+#if LV_USE_LOG
+void my_log_cb(lv_log_level_t level, const char * file, uint32_t line, const char * fn_name, const char * dsc)
 {
-    Serial.printf(buf);
-    Serial.flush();
+  /*Send the logs via serial port*/
+  if(level == LV_LOG_LEVEL_ERROR) Serial.print("ERROR: ");
+  if(level == LV_LOG_LEVEL_WARN)  Serial.print("WARNING: ");
+  if(level == LV_LOG_LEVEL_INFO)  Serial.print("INFO: ");
+  if(level == LV_LOG_LEVEL_TRACE) Serial.print("TRACE: ");
+
+  char line_str[8];
+  sprintf(line_str,"%d", line);
+  Serial.print("#");
+  Serial.println(line_str);
 }
 #endif
 
@@ -109,7 +112,9 @@ static uint8_t count=0;
 void example_increase_reboot(void *arg)
 {
   count++;
-  if(count==30){
+  if(count==10){
+    // LV_LOG_INFO("example_increase_reboot called!: %d\n", count);
+    Serial.println("example_increase_reboot called!");
     // esp_restart();
   }
 }
@@ -134,11 +139,6 @@ void my_touchpad_read( lv_indev_drv_t * indev_drv, lv_indev_data_t * data )
       /*Set the coordinates*/
       data->point.x = touch.data.x;
       data->point.y = touch.data.y;
-      // Serial.print("(");
-      // Serial.print(touch.data.x);
-      // Serial.print(", ");
-      // Serial.print(touch.data.y);
-      // Serial.println(")");
 
       // turn off leds & stop mp3
       if (isPlaying)
@@ -156,15 +156,20 @@ void printLocalTime()
 {
   struct tm timeinfo;
   static int seconds = 0;
+  char buf[10];
 
   if(!getLocalTime(&timeinfo))
   {
+    // LV_LOG_INFO("No time available (yet)\n");
     Serial.println("No time available (yet)");
     isReady = false;
   }
   else
   {
-    Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+    // LV_LOG_INFO("Time Info: %A, %B %d %Y %H:%M:%S\n", &timeinfo);
+    Serial.print("Time info received: ");
+    sprintf(buf, "%02d:%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+    Serial.println(buf);
     std::stringstream ss;
     ss << std::setfill('0') << std::setw(2) << timeinfo.tm_hour;
     lv_label_set_text(objects.hour, ss.str().c_str());
@@ -183,6 +188,7 @@ void printLocalTime()
 // Callback function (get's called when time adjusts via NTP)
 void timeavailable(struct timeval *t)
 {
+  // LV_LOG_INFO("Got time adjustment from NTP!\n");
   Serial.println("Got time adjustment from NTP!");
   printLocalTime();
 }
@@ -196,26 +202,27 @@ void initMP3()
   FPSerial.begin(9600);
 #endif
 
-  Serial.println(F("DFRobot DFPlayer Mini Demo"));
-  Serial.println(F("Initializing DFPlayer ... (May take 3~5 seconds)"));
-  
+  // LV_LOG_INFO("Initializing DFPlayer ... (May take 3~5 seconds)\n");
+  Serial.println("Initializing DFPlayer ... (May take 3~5 seconds)");
   if (!myDFPlayer.begin(FPSerial, /*isACK = */true, /*doReset = */true)) {  //Use serial to communicate with mp3.
-    Serial.println(F("Unable to begin:"));
-    Serial.println(F("1.Please recheck the connection!"));
-    Serial.println(F("2.Please insert the SD card!"));
+    // LV_LOG_INFO("Unable to begin, please check connections & sd card\n");
+    Serial.println("Unable to begin, please check connections & sd card");
     while(true){
       delay(0); // Code to compatible with ESP8266 watch dog.
     }
   }
-  Serial.println(F("DFPlayer Mini online."));
-  
-  myDFPlayer.volume(30);  //Set volume value. From 0 to 30
+
+  // LV_LOG_INFO("DFPlayer Mini online.\n");
+  Serial.println("DFPlayer Mini online.");
+  myDFPlayer.volume(15); 
 }
 
 void fillAlarmOptions()
 {
   std::stringstream ss;
   
+  // LV_LOG_INFO("Filling alarm hours & minutes\n");
+  Serial.println("Filling alarm hours & minutes");
   // fill hours (0-23)
   for (int i = 0; i < 24; i++)
   {
@@ -244,13 +251,19 @@ void action_change_background(lv_event_t * e)
     lv_roller_get_selected_str(obj, buf, sizeof(buf));
     int next = atoi(buf) - 1;
     lv_obj_set_style_bg_img_src(objects.main, &backgrounds[next], LV_PART_MAIN | LV_STATE_DEFAULT);    
+    // LV_LOG_INFO("Background image changed to %d\n", next);
+    Serial.print("Background image changed to ");
+    Serial.println(next);
   }  
+  LV_UNUSED(obj);
 }
 
 void action_blink_leds(lv_event_t * event)
 {
   if (lv_obj_has_state(objects.switch_leds, LV_STATE_CHECKED))
   {
+    // LV_LOG_INFO("Testing led blinking...\n");
+    Serial.println("Testing led blinking...");
     ledRed.blinkInPeriod(LED_RED_BLINK_ON, LED_BLINK_OFF, LED_BLINK_INTERVAL); 
     ledBlue.blinkInPeriod(LED_BLUE_BLINK_ON, LED_BLINK_OFF, LED_BLINK_INTERVAL);
     lv_led_set_brightness(objects.led_red, 255);
@@ -265,45 +278,55 @@ void action_blink_leds(lv_event_t * event)
 
 void action_change_volume(lv_event_t * event)
 {
-    lv_obj_t * slider = lv_event_get_target(event);
-    int volume = (int)lv_slider_get_value(slider);
-    myDFPlayer.volume(volume);
-    delay(1000);
-    myDFPlayer.play(2);
+  lv_obj_t * slider = lv_event_get_target(event);
+  int volume = (int)lv_slider_get_value(slider);
+  myDFPlayer.volume(volume);
+  delay(100);
+  myDFPlayer.play(2);
+  // LV_LOG_INFO("Volume changed to: %d\n", volume);
+  Serial.print("Volume changed to: ");
+  Serial.println(volume);
+  LV_UNUSED(slider);
 }
 
 void checkAlarm()
 {
   char bufHour[3];
   char bufMin[3];
-  Serial.println("Checking for alarm settings...");
+  char buf[25];
   
   // check if alarm is enabled
-  if (lv_obj_has_state(objects.alarm, LV_STATE_CHECKED))
+  alarmEnabled = lv_obj_has_state(objects.alarm, LV_STATE_CHECKED);
+  // LV_LOG_INFO("Checking for alarm settings - enabled = %d\n", alarmEnabled);
+  Serial.print("Checking for alarm settings - enabled = ");
+  Serial.println(alarmEnabled);
+  if (alarmEnabled)
   {
-    Serial.println("Alarm is enabled");
     lv_roller_get_selected_str(objects.hour_alarm, bufHour, sizeof(bufHour));
     lv_roller_get_selected_str(objects.min_alarm, bufMin, sizeof(bufMin));
     
     // check hour & minutes agains configured alarm
-    Serial.print("Current time: ");
-    Serial.print(lv_label_get_text(objects.hour));
-    Serial.print(":");
-    Serial.println(lv_label_get_text(objects.minutes));
-    Serial.print("Alarm time: ");
-    Serial.print(bufHour);
-    Serial.print(":");
-    Serial.println(bufMin);
+    // LV_LOG_INFO("Current time: %s:%s\n", lv_label_get_text(objects.hour), lv_label_get_text(objects.minutes));
+    // LV_LOG_INFO("Alarm time: %s:%s\n", bufHour, bufMin);
+    sprintf(buf, "Current time: %s:%s", lv_label_get_text(objects.hour), lv_label_get_text(objects.minutes));
+    Serial.println(buf);
+    sprintf(buf, "Alarm time: %s:%s", bufHour, bufMin);
+    Serial.println(buf);
     if (strcmp(bufHour, lv_label_get_text(objects.hour)) == 0 
       && strcmp(bufMin, lv_label_get_text(objects.minutes)) == 0)
     {
       // blink leds 
+      // LV_LOG_INFO("Blinking leds...\n");
       Serial.println("Blinking leds...");
       ledBlue.blink(LED_BLUE_BLINK_ON, LED_BLINK_OFF);
       ledRed.blink(LED_RED_BLINK_ON, LED_BLINK_OFF);
 
       // play first mp3
-      Serial.println("Playing sound...");
+      int volume = (int)lv_slider_get_value(objects.volume);
+      // LV_LOG_INFO("Playing mp3 with volume = %d\n", volume);
+      Serial.print("Playing mp3 with volume = ");
+      Serial.println(volume);
+      myDFPlayer.volume(volume);
       myDFPlayer.play(1);
 
       // change state to playing
@@ -350,16 +373,17 @@ void updateBlink(void *pvParameters)
 void setup()
 {
   Serial.begin(115200); /* prepare for possible serial debug */
+  Serial.println("BB8 initialization started...");
+  lv_init();
+
+  #if LV_USE_LOG
+    lv_log_register_print_cb(my_log_cb);
+  #endif
 
   String LVGL_Arduino = "Hello Arduino! ";
-  LVGL_Arduino += String('V') + lv_version_major() + "." + lv_version_minor() + "." + lv_version_patch();
-  Serial.println( LVGL_Arduino );
-  Serial.println( "I am LVGL_Arduino" );
-
-  lv_init();
-#if LV_USE_LOG != 0
-  lv_log_register_print_cb( my_print ); /* register print function for debugging */
-#endif
+  LVGL_Arduino += String('V') + lv_version_major() + "." + lv_version_minor() + "." + lv_version_patch() + "\n";
+  // LV_LOG_INFO(LVGL_Arduino);
+  Serial.println(LVGL_Arduino);
 
   tft.begin(); /* TFT init */
   tft.setRotation(0); /* Landscape orientation, flipped */
@@ -433,11 +457,15 @@ void setup()
 
   // Connect to Wi-Fi
   WiFi.begin(ssid, password);
-  Serial.print("Connecting to wifi ");
+  // LV_LOG_INFO("Connecting to wifi");
+  Serial.print("Connecting to wifi");
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    delay(1000);
+    // LV_LOG_INFO(".");
     Serial.print(".");
   }
+  // LV_LOG_INFO("\nConnected to Wi-Fi network with IP Address: ");
+  // LV_LOG_INFO(WiFi.localIP());
   Serial.print("\nConnected to Wi-Fi network with IP Address: ");
   Serial.println(WiFi.localIP());
 
@@ -449,7 +477,8 @@ void setup()
   initMP3();
   fillAlarmOptions();
 
-  Serial.println( "Setup done" );
+  // LV_LOG_INFO("Setup done!\n");
+  Serial.println("Setup done!\n");
 }
 
 void loop()
