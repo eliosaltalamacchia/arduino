@@ -13,6 +13,7 @@
 #include "ui.h"
 #include "images.h"
 #include "screens.h"
+#include "actions.h"
 
 // for esp32 tasks
 #if CONFIG_FREERTOS_UNICORE
@@ -53,8 +54,8 @@ const lv_img_dsc_t backgrounds[] = {img_star_wars_bg_1, img_star_wars_bg_2, img_
 DFRobotDFPlayerMini myDFPlayer;
 
 // wi-fi configuration
-const char* ssid = "*******";
-const char* password = "************";
+const char* ssid = "***";
+const char* password = "***";
 
 // lvgl screen configuration
 static const uint16_t screenWidth  = 240;
@@ -71,6 +72,9 @@ ezLED ledRed(LED_RED);
 // state to indicate alarm is playing mp3 & lights
 bool isPlaying = false;
 bool alarmEnabled = false;
+
+// to switch between screen states
+bool isSleeping = false;
 
 #if LV_USE_LOG
 void my_log_cb(lv_log_level_t level, const char * file, uint32_t line, const char * fn_name, const char * dsc)
@@ -148,7 +152,34 @@ void my_touchpad_read( lv_indev_drv_t * indev_drv, lv_indev_data_t * data )
         myDFPlayer.stop();
         isPlaying = false;
       }
+
+      // turn on screen if is sleeping
+      if (isSleeping)
+      {
+        isSleeping = false;
+        hideOff();
+      }
     }
+}
+
+void hideOff()
+{
+  lv_obj_clear_flag(objects.seconds, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(objects.hour, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(objects.dots, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(objects.minutes, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(objects.date, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(objects.mode, LV_OBJ_FLAG_HIDDEN);
+}
+
+void hideOn()
+{
+  lv_obj_add_flag(objects.seconds, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(objects.hour, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(objects.dots, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(objects.minutes, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(objects.date, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(objects.mode, LV_OBJ_FLAG_HIDDEN);
 }
 
 // get local datetime from ntp server and print it in the screen
@@ -335,6 +366,21 @@ void checkAlarm()
   }
 }
 
+void checkSleepMode()
+{
+  // check if alarm is enabled
+  bool enabled = lv_obj_has_state(objects.sleep_mode, LV_STATE_CHECKED);
+  Serial.print("Checking for sleep mode settings - enabled = ");
+  Serial.println(enabled);
+  if (enabled && !isSleeping)
+  {
+    // switch off screen, set hidden to false
+    hideOn();
+    isSleeping = true;
+  }
+
+}
+
 void updateBlink(void *pvParameters)
 {
   static int seconds = 0;
@@ -356,7 +402,10 @@ void updateBlink(void *pvParameters)
       printLocalTime();
 
       // check alarm after update
-      checkAlarm(); 
+      checkAlarm();
+
+      // check for sleep mode
+      checkSleepMode(); 
     }
     else {
       // get time every second until first update    
@@ -451,9 +500,13 @@ void setup()
   /**
    * This will set configured ntp servers and constant TimeZone/daylightOffset
    * should be OK if your time zone does not need to adjust daylightOffset twice a year,
-   * in such a case time adjustment won't be handled automagicaly.
+   * in such a case time adjustment won't be handled automatically.
    */
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2);
+  
+  // change timezone
+  setenv("TZ","CET-1CEST,M3.5.0,M10.5.0/3",1);
+  tzset();
 
   // Connect to Wi-Fi
   WiFi.begin(ssid, password);

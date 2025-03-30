@@ -182,16 +182,6 @@ void create_screen_main() {
             lv_obj_add_event_cb(obj, event_handler_cb_main_mode, LV_EVENT_ALL, flowState);
             lv_obj_add_flag(obj, LV_OBJ_FLAG_CHECKABLE);
         }
-        {
-            // bgSleep
-            lv_obj_t *obj = lv_img_create(parent_obj);
-            objects.bg_sleep = obj;
-            lv_obj_set_pos(obj, 0, 0);
-            lv_obj_set_size(obj, 240, 240);
-            lv_img_set_src(obj, &img_star_wars_bg_1);
-            lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_set_style_img_opa(obj, 180, LV_PART_MAIN | LV_STATE_DEFAULT);
-        }
     }
 }
 
@@ -481,7 +471,7 @@ void tick_screen_config_background() {
 
 
 static const char *screen_names[] = { "Main", "ConfigAlarm", "ConfigVolume", "ConfigBackground" };
-static const char *object_names[] = { "main", "config_alarm", "config_volume", "config_background", "mode", "back", "next", "back_2", "next_1", "volume", "switch_leds", "back_1", "background_list", "seconds", "hour", "dots", "minutes", "date", "bg_sleep", "alarm", "sleep_mode", "mode_title", "hour_alarm", "min_alarm", "back_title", "next_title", "back_title_2", "volume_title", "next_title_1", "led_red", "led_blue", "leds_title", "back_title_1", "bg_title" };
+static const char *object_names[] = { "main", "config_alarm", "config_volume", "config_background", "mode", "back", "next", "back_2", "next_1", "volume", "switch_leds", "back_1", "background_list", "seconds", "hour", "dots", "minutes", "date", "alarm", "sleep_mode", "mode_title", "hour_alarm", "min_alarm", "back_title", "next_title", "back_title_2", "volume_title", "next_title_1", "led_red", "led_blue", "leds_title", "back_title_1", "bg_title" };
 
 void create_screens() {
     eez_flow_init_screen_names(screen_names, sizeof(screen_names) / sizeof(const char *));

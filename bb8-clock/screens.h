@@ -26,7 +26,6 @@ typedef struct _objects_t {
     lv_obj_t *dots;
     lv_obj_t *minutes;
     lv_obj_t *date;
-    lv_obj_t *bg_sleep;
     lv_obj_t *alarm;
     lv_obj_t *sleep_mode;
     lv_obj_t *mode_title;
@@ -68,9 +67,6 @@ void tick_screen_config_background();
 void create_screens();
 void tick_screen(int screen_index);
 
-void action_blink_leds(lv_event_t * event);
-void action_change_background(lv_event_t * event);
-void action_change_volume(lv_event_t * event);
 
 #ifdef __cplusplus
 }
